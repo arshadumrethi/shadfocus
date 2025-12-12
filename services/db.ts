@@ -32,6 +32,11 @@ export const addProject = async (userId: string, project: Omit<Project, 'id'>) =
   await db.collection(`users/${userId}/projects`).add(project);
 };
 
+export const updateProject = async (userId: string, projectId: string, updates: Partial<Project>) => {
+  if (!db) return;
+  await db.collection(`users/${userId}/projects`).doc(projectId).update(updates);
+};
+
 export const deleteProject = async (userId: string, projectId: string) => {
   if (!db) return;
   await db.collection(`users/${userId}/projects`).doc(projectId).delete();

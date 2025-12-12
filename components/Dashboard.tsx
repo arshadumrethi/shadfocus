@@ -207,6 +207,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession })
                 <th className="px-6 py-4">Project</th>
                 <th className="px-6 py-4">Notes</th>
                 <th className="px-6 py-4">Date</th>
+                <th className="px-6 py-4">Time</th>
                 <th className="px-6 py-4">Duration</th>
                 <th className="px-6 py-4">Tags</th>
                 <th className="px-6 py-4 text-right">Edit</th>
@@ -231,6 +232,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession })
                         <Calendar size={14} />
                         {new Date(session.endTime).toLocaleDateString()}
                       </div>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-600">
+                      {session.startTime ? new Date(session.startTime).toLocaleTimeString('en-US', { 
+                        hour: 'numeric', 
+                        minute: '2-digit',
+                        hour12: true 
+                      }) : '-'}
                     </td>
                     <td className="px-6 py-4 text-sm font-medium text-gray-700">
                       {Math.ceil(session.durationSeconds / 60)} min
@@ -258,7 +266,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession })
                 );
               }) : (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                  <td colSpan={7} className="px-6 py-12 text-center text-gray-500">
                     No sessions found in this period.
                   </td>
                 </tr>

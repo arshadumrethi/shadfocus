@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   Play, Pause, RotateCcw, Settings as SettingsIcon, 
   BarChart2, Timer as TimerIcon, Tag, Plus, CheckCircle, X, PlusCircle, Trash2,
-  ChevronUp, ChevronDown, Clock, Watch, LogOut, User as UserIcon
+  ChevronUp, ChevronDown, Clock, Watch, LogOut, User as UserIcon, MoreVertical, Edit
 } from 'lucide-react';
 import { Settings, Session, Project, ProjectColor } from './types';
 import { PROJECT_COLORS, DEFAULT_PROJECTS } from './constants';
@@ -68,10 +69,17 @@ const AuthenticatedApp: React.FC = () => {
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectColor, setNewProjectColor] = useState<ProjectColor>('blue');
 
+  // Project Edit State
+  const [projectToEdit, setProjectToEdit] = useState<Project | null>(null);
+  const [editProjectName, setEditProjectName] = useState('');
+  const [editProjectColor, setEditProjectColor] = useState<ProjectColor>('blue');
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+
   // Project Deletion State
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
 
   const timerRef = useRef<number | null>(null);
+  const menuButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   const activeProject = projects.find(p => p.id === activeProjectId) || projects[0] || DEFAULT_PROJECTS[0];
   const colorTheme = PROJECT_COLORS[activeProject?.color || 'blue'];
@@ -112,6 +120,41 @@ const AuthenticatedApp: React.FC = () => {
       setActiveProjectId(projects[0].id);
     }
   }, [projects, activeProjectId]);
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = () => {
+      setOpenMenuId(null);
+    };
+    if (openMenuId) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [openMenuId]);
+
+  // Update browser tab title with timer
+  useEffect(() => {
+    if (isActive) {
+      if (timerMode === 'pomodoro') {
+        const minutes = Math.floor(timeLeft / 60);
+        const seconds = timeLeft % 60;
+        document.title = `ShadFocus - ${minutes}:${seconds.toString().padStart(2, '0')}`;
+      } else {
+        const minutes = Math.floor(stopwatchSeconds / 60);
+        const seconds = stopwatchSeconds % 60;
+        document.title = `ShadFocus - ${minutes}:${seconds.toString().padStart(2, '0')}`;
+      }
+    } else {
+      document.title = 'ShadFocus';
+    }
+    
+    return () => {
+      // Reset title when component unmounts or timer stops
+      if (!isActive) {
+        document.title = 'ShadFocus';
+      }
+    };
+  }, [isActive, timerMode, timeLeft, stopwatchSeconds]);
 
   // Timer Logic: Ticking
   useEffect(() => {
@@ -266,6 +309,26 @@ const AuthenticatedApp: React.FC = () => {
     setNewProjectColor('blue');
   };
 
+  const openEditProject = (project: Project) => {
+    setProjectToEdit(project);
+    setEditProjectName(project.name);
+    setEditProjectColor(project.color);
+    setOpenMenuId(null);
+  };
+
+  const updateProject = () => {
+    if (!editProjectName.trim() || !projectToEdit || !user) return;
+    
+    db.updateProject(user.uid, projectToEdit.id, {
+      name: editProjectName.trim(),
+      color: editProjectColor
+    });
+    
+    setProjectToEdit(null);
+    setEditProjectName('');
+    setEditProjectColor('blue');
+  };
+
   const initiateDeleteProject = (project: Project, e: React.MouseEvent) => {
     e.stopPropagation();
     e.nativeEvent.stopImmediatePropagation();
@@ -352,13 +415,13 @@ const AuthenticatedApp: React.FC = () => {
         {view === 'timer' ? (
           <div className="flex flex-col items-center gap-6 animate-in fade-in zoom-in-95 duration-500">
             {/* Top Section: New Project & Project List */}
-            <div className="w-full max-w-xl">
+            <div className="w-full max-w-4xl">
               <div className="flex flex-col sm:flex-row gap-4 mb-6 items-start sm:items-center justify-between">
                 <div className="flex gap-3 w-full sm:w-auto">
                   <Button 
                     onClick={() => setIsNewProjectModalOpen(true)}
                     variant="primary"
-                    className="shadow-sm"
+                    className="!rounded-lg px-6 py-3 shadow-lg shadow-gray-900/30 hover:shadow-xl hover:shadow-gray-900/40"
                     themeColorClass="bg-gray-900"
                   >
                     <PlusCircle size={18} /> New Project
@@ -366,7 +429,7 @@ const AuthenticatedApp: React.FC = () => {
                   <Button 
                     onClick={() => setView('dashboard')}
                     variant="secondary"
-                    className="shadow-sm"
+                    className="!rounded-lg px-6 py-3 shadow-lg shadow-gray-300/50 hover:shadow-xl hover:shadow-gray-300/70"
                   >
                     Go to Dashboard
                   </Button>
@@ -378,47 +441,102 @@ const AuthenticatedApp: React.FC = () => {
                 </div>
               </div>
 
-               {/* Projects List */}
-               <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide snap-x mb-6">
+               {/* Projects List - Grid Layout */}
+               <div className="grid grid-cols-3 gap-4 mb-6">
                 {projects.map(p => {
                   const pTheme = PROJECT_COLORS[p.color];
                   const isActiveProject = activeProjectId === p.id;
                   return (
                     <div
                       key={p.id}
-                      onClick={() => setActiveProjectId(p.id)}
+                      onClick={() => {
+                        setActiveProjectId(p.id);
+                        setOpenMenuId(null);
+                      }}
                       className={`
-                        group relative flex items-center gap-2 px-4 py-3 rounded-xl border transition-all whitespace-nowrap snap-start cursor-pointer select-none
+                        group relative flex items-center justify-between gap-2 px-4 py-3 rounded-xl border transition-all cursor-pointer select-none w-full
                         ${isActiveProject 
-                          ? `${pTheme.primary} text-white border-transparent shadow-md pr-10` 
+                          ? `${pTheme.primary} text-white border-transparent shadow-md` 
                           : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
                         }
                       `}
                     >
-                      <div className={`w-2 h-2 rounded-full ${isActiveProject ? 'bg-white' : pTheme.primary}`}></div>
-                      <span className="text-sm font-medium">{p.name}</span>
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${isActiveProject ? 'bg-white' : pTheme.primary}`}></div>
+                        <span className="text-sm font-medium truncate">{p.name}</span>
+                      </div>
                       
-                      {/* Delete Button */}
-                      {projects.length > 1 && (
+                      {/* 3-dot Menu */}
+                      <div className="relative flex-shrink-0">
                         <button
+                          ref={(el) => { menuButtonRefs.current[p.id] = el; }}
                           type="button"
-                          onClick={(e) => initiateDeleteProject(p, e)}
+                          data-project-id={p.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenMenuId(openMenuId === p.id ? null : p.id);
+                          }}
                           className={`
-                            absolute right-2 p-1.5 rounded-full transition-all z-20 flex items-center justify-center
+                            p-1.5 rounded-full transition-all z-30 flex items-center justify-center
                             ${isActiveProject 
                               ? 'text-white/70 hover:text-white hover:bg-black/20' 
-                              : 'text-gray-400 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100'
+                              : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100 opacity-0 group-hover:opacity-100'
                             }
                           `}
-                          title="Delete Project"
+                          title="Project Options"
                         >
-                          <X size={14} />
+                          <MoreVertical size={16} />
                         </button>
-                      )}
+                      </div>
                     </div>
                   );
                 })}
-              </div>
+               </div>
+               
+               {/* Dropdown Menu - Rendered as portal outside overflow container */}
+               {openMenuId && menuButtonRefs.current[openMenuId] && createPortal(
+                 <div 
+                   className="fixed z-50 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[120px]"
+                   style={{
+                     top: `${menuButtonRefs.current[openMenuId]!.getBoundingClientRect().bottom + 4}px`,
+                     left: `${menuButtonRefs.current[openMenuId]!.getBoundingClientRect().right - 120}px`
+                   }}
+                   onClick={(e) => e.stopPropagation()}
+                 >
+                   {(() => {
+                     const project = projects.find(p => p.id === openMenuId);
+                     if (!project) return null;
+                     return (
+                       <>
+                         <button
+                           onClick={(e) => {
+                             e.stopPropagation();
+                             openEditProject(project);
+                           }}
+                           className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                         >
+                           <Edit size={14} />
+                           Edit
+                         </button>
+                         {projects.length > 1 && (
+                           <button
+                             onClick={(e) => {
+                               e.stopPropagation();
+                               initiateDeleteProject(project, e);
+                               setOpenMenuId(null);
+                             }}
+                             className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                           >
+                             <Trash2 size={14} />
+                             Delete
+                           </button>
+                         )}
+                       </>
+                     );
+                   })()}
+                 </div>,
+                 document.body
+               )}
             </div>
 
             {/* Mode Toggle */}
@@ -639,6 +757,58 @@ const AuthenticatedApp: React.FC = () => {
           <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
              <Button variant="secondary" onClick={() => setIsNewProjectModalOpen(false)}>Cancel</Button>
              <Button onClick={createProject} disabled={!newProjectName.trim()}>Create Project</Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={!!projectToEdit}
+        onClose={() => {
+          setProjectToEdit(null);
+          setEditProjectName('');
+          setEditProjectColor('blue');
+        }}
+        title="Edit Project"
+      >
+        <div className="space-y-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Project Name</label>
+            <input 
+              type="text" 
+              value={editProjectName}
+              onChange={(e) => setEditProjectName(e.target.value)}
+              placeholder="e.g., Client Work, Learning"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              autoFocus
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Project Color</label>
+            <div className="flex gap-3">
+              {(Object.keys(PROJECT_COLORS) as ProjectColor[]).map((c) => (
+                 <button
+                  key={c}
+                  onClick={() => setEditProjectColor(c)}
+                  className={`
+                    w-10 h-10 rounded-full transition-all flex items-center justify-center
+                    ${PROJECT_COLORS[c].primary} 
+                    ${editProjectColor === c ? 'ring-4 ring-offset-2 ring-gray-200 scale-110' : 'hover:scale-105 opacity-80 hover:opacity-100'}
+                  `}
+                >
+                  {editProjectColor === c && <CheckCircle size={16} className="text-white" />}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+             <Button variant="secondary" onClick={() => {
+               setProjectToEdit(null);
+               setEditProjectName('');
+               setEditProjectColor('blue');
+             }}>Cancel</Button>
+             <Button onClick={updateProject} disabled={!editProjectName.trim()}>Save Changes</Button>
           </div>
         </div>
       </Modal>

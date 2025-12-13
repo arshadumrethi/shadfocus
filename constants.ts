@@ -40,6 +40,7 @@ export const PROJECT_COLORS: Record<ProjectColor, ColorTheme> = {
 
 export const DEFAULT_SETTINGS: Settings = {
   timerDuration: 25,
+  darkMode: false,
 };
 
 export const DEFAULT_PROJECTS: Project[] = [

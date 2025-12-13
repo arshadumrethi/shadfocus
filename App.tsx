@@ -41,7 +41,7 @@ const AuthenticatedApp: React.FC = () => {
   
   // --- State ---
   // Data State (now handled by Firestore subscriptions)
-  const [settings, setSettings] = useState<Settings>({ timerDuration: 25 });
+  const [settings, setSettings] = useState<Settings>({ timerDuration: 25, darkMode: false });
   const [projects, setProjects] = useState<Project[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string>('');
@@ -258,9 +258,14 @@ const AuthenticatedApp: React.FC = () => {
 
   const handleSaveSettings = (newSettings: Settings) => {
     if (user) {
+      // Update settings immediately without closing modal or resetting timer
       db.updateSettingsInDb(user.uid, newSettings);
       setSettings(newSettings);
-      setIsSettingsOpen(false);
+      // Only update timeLeft if timer is NOT running and it's a pomodoro timer duration change
+      if (!isActive && timerMode === 'pomodoro' && newSettings.timerDuration !== settings.timerDuration) {
+        setTimeLeft(newSettings.timerDuration * 60);
+      }
+      // Don't close modal - let user continue adjusting settings
     }
   };
 
@@ -363,39 +368,47 @@ const AuthenticatedApp: React.FC = () => {
     );
   }
 
+  const isDarkMode = settings.darkMode;
+
   return (
-    <div className={`min-h-screen transition-colors duration-500 bg-gray-50`}>
+    <div className={`min-h-screen transition-colors duration-500 ${isDarkMode ? 'bg-gray-900' : 'bg-gray-50'}`}>
       {/* Navigation */}
-      <nav className="fixed top-0 w-full p-4 flex justify-center z-40 bg-white/90 backdrop-blur-md border-b border-gray-100">
+      <nav className={`fixed top-0 w-full p-4 flex justify-center z-40 backdrop-blur-md border-b ${isDarkMode ? 'bg-gray-800/90 border-gray-700' : 'bg-white/90 border-gray-100'}`}>
         <div className="w-full max-w-4xl flex justify-between items-center">
-          <h1 className={`text-xl font-bold flex items-center gap-2 text-gray-800`}>
+          <h1 className={`text-xl font-bold flex items-center gap-2 ${isDarkMode ? 'text-gray-100' : 'text-gray-800'}`}>
              ShadFocus
           </h1>
           <div className="flex gap-2 items-center">
             <button 
               onClick={() => setView('timer')}
-              className={`p-2 rounded-lg transition-colors ${view === 'timer' ? 'bg-gray-100 text-gray-900' : 'text-gray-500 hover:bg-gray-50'}`}
+              className={`p-2 rounded-lg transition-colors ${view === 'timer' 
+                ? (isDarkMode ? 'bg-gray-700 text-gray-100' : 'bg-gray-100 text-gray-900') 
+                : (isDarkMode ? 'text-gray-400 hover:bg-gray-700' : 'text-gray-500 hover:bg-gray-50')
+              }`}
               title="Timer"
             >
               <TimerIcon size={24} />
             </button>
             <button 
               onClick={() => setView('dashboard')}
-              className={`p-2 rounded-lg transition-colors ${view === 'dashboard' ? 'bg-gray-100 text-gray-900' : 'text-gray-500 hover:bg-gray-50'}`}
+              className={`p-2 rounded-lg transition-colors ${view === 'dashboard' 
+                ? (isDarkMode ? 'bg-gray-700 text-gray-100' : 'bg-gray-100 text-gray-900') 
+                : (isDarkMode ? 'text-gray-400 hover:bg-gray-700' : 'text-gray-500 hover:bg-gray-50')
+              }`}
               title="Dashboard"
             >
               <BarChart2 size={24} />
             </button>
             <button 
               onClick={() => setIsSettingsOpen(true)}
-              className="p-2 text-gray-500 hover:bg-gray-50 rounded-lg transition-colors"
+              className={`p-2 rounded-lg transition-colors ${isDarkMode ? 'text-gray-400 hover:bg-gray-700' : 'text-gray-500 hover:bg-gray-50'}`}
               title="Settings"
             >
               <SettingsIcon size={24} />
             </button>
             
             {/* User Profile */}
-            <div className="ml-2 pl-2 border-l border-gray-200 flex items-center gap-2">
+            <div className={`ml-2 pl-2 border-l flex items-center gap-2 ${isDarkMode ? 'border-gray-700' : 'border-gray-200'}`}>
               {user?.photoURL ? (
                 <img src={user.photoURL} alt={user.displayName || 'User'} className="w-8 h-8 rounded-full border border-gray-200" />
               ) : (
@@ -403,7 +416,7 @@ const AuthenticatedApp: React.FC = () => {
                   <UserIcon size={16} />
                 </div>
               )}
-              <button onClick={logout} className="p-2 text-gray-400 hover:text-red-500 transition-colors" title="Sign Out">
+              <button onClick={logout} className={`p-2 transition-colors ${isDarkMode ? 'text-gray-500 hover:text-red-400' : 'text-gray-400 hover:text-red-500'}`} title="Sign Out">
                 <LogOut size={20} />
               </button>
             </div>
@@ -421,8 +434,12 @@ const AuthenticatedApp: React.FC = () => {
                   <Button 
                     onClick={() => setIsNewProjectModalOpen(true)}
                     variant="primary"
-                    className="!rounded-lg px-6 py-3 shadow-lg shadow-gray-900/30 hover:shadow-xl hover:shadow-gray-900/40"
-                    themeColorClass="bg-gray-900"
+                    className={`!rounded-lg px-6 py-3 ${
+                      isDarkMode 
+                        ? 'shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40 bg-blue-500 hover:bg-blue-600' 
+                        : 'shadow-lg shadow-gray-900/30 hover:shadow-xl hover:shadow-gray-900/40'
+                    }`}
+                    themeColorClass={isDarkMode ? 'bg-blue-500' : 'bg-gray-900'}
                   >
                     <PlusCircle size={18} /> New Project
                   </Button>
@@ -436,8 +453,8 @@ const AuthenticatedApp: React.FC = () => {
                 </div>
                 
                 <div className="text-right hidden sm:block">
-                  <span className="text-xs text-gray-400 uppercase tracking-wider block">Currently Working On</span>
-                  <span className={`font-semibold ${PROJECT_COLORS[activeProject.color].text}`}>{activeProject.name}</span>
+                  <span className={`text-xs uppercase tracking-wider block ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>Currently Working On</span>
+                  <span className={`font-semibold ${isDarkMode ? 'text-gray-200' : PROJECT_COLORS[activeProject.color].text}`}>{activeProject.name}</span>
                 </div>
               </div>
 
@@ -457,7 +474,9 @@ const AuthenticatedApp: React.FC = () => {
                         group relative flex items-center justify-between gap-2 px-4 py-3 rounded-xl border transition-all cursor-pointer select-none w-full
                         ${isActiveProject 
                           ? `${pTheme.primary} text-white border-transparent shadow-md` 
-                          : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                          : isDarkMode 
+                            ? 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-600' 
+                            : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
                         }
                       `}
                     >
@@ -480,7 +499,9 @@ const AuthenticatedApp: React.FC = () => {
                             p-1.5 rounded-full transition-all z-30 flex items-center justify-center
                             ${isActiveProject 
                               ? 'text-white/70 hover:text-white hover:bg-black/20' 
-                              : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100 opacity-0 group-hover:opacity-100'
+                              : isDarkMode
+                                ? 'text-gray-500 hover:text-gray-300 hover:bg-gray-700 opacity-0 group-hover:opacity-100'
+                                : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100 opacity-0 group-hover:opacity-100'
                             }
                           `}
                           title="Project Options"
@@ -496,7 +517,7 @@ const AuthenticatedApp: React.FC = () => {
                {/* Dropdown Menu - Rendered as portal outside overflow container */}
                {openMenuId && menuButtonRefs.current[openMenuId] && createPortal(
                  <div 
-                   className="fixed z-50 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[120px]"
+                   className={`fixed z-50 rounded-lg shadow-lg border py-1 min-w-[120px] ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
                    style={{
                      top: `${menuButtonRefs.current[openMenuId]!.getBoundingClientRect().bottom + 4}px`,
                      left: `${menuButtonRefs.current[openMenuId]!.getBoundingClientRect().right - 120}px`
@@ -513,7 +534,7 @@ const AuthenticatedApp: React.FC = () => {
                              e.stopPropagation();
                              openEditProject(project);
                            }}
-                           className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                           className={`w-full px-4 py-2 text-left text-sm flex items-center gap-2 ${isDarkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-50'}`}
                          >
                            <Edit size={14} />
                            Edit
@@ -525,7 +546,7 @@ const AuthenticatedApp: React.FC = () => {
                                initiateDeleteProject(project, e);
                                setOpenMenuId(null);
                              }}
-                             className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                             className={`w-full px-4 py-2 text-left text-sm flex items-center gap-2 ${isDarkMode ? 'text-red-400 hover:bg-red-900/30' : 'text-red-600 hover:bg-red-50'}`}
                            >
                              <Trash2 size={14} />
                              Delete
@@ -540,7 +561,7 @@ const AuthenticatedApp: React.FC = () => {
             </div>
 
             {/* Mode Toggle */}
-            <div className="bg-gray-200 p-1.5 rounded-xl flex gap-1 mb-2">
+            <div className={`p-1.5 rounded-xl flex gap-1 mb-2 ${isDarkMode ? 'bg-gray-800' : 'bg-gray-200'}`}>
               <button
                 onClick={() => {
                   setTimerMode('stopwatch');
@@ -548,7 +569,10 @@ const AuthenticatedApp: React.FC = () => {
                   setStopwatchSeconds(0);
                   setStartTime(null);
                 }}
-                className={`flex items-center gap-2 px-6 py-2 rounded-lg text-sm font-semibold transition-all ${timerMode === 'stopwatch' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`flex items-center gap-2 px-6 py-2 rounded-lg text-sm font-semibold transition-all ${timerMode === 'stopwatch' 
+                  ? (isDarkMode ? 'bg-gray-700 text-gray-100 shadow-sm' : 'bg-white text-gray-900 shadow-sm')
+                  : (isDarkMode ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-700')
+                }`}
               >
                 <Watch size={16} /> Timer
               </button>
@@ -559,7 +583,10 @@ const AuthenticatedApp: React.FC = () => {
                   setTimeLeft(settings.timerDuration * 60);
                   setStartTime(null);
                 }}
-                className={`flex items-center gap-2 px-6 py-2 rounded-lg text-sm font-semibold transition-all ${timerMode === 'pomodoro' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`flex items-center gap-2 px-6 py-2 rounded-lg text-sm font-semibold transition-all ${timerMode === 'pomodoro' 
+                  ? (isDarkMode ? 'bg-gray-700 text-gray-100 shadow-sm' : 'bg-white text-gray-900 shadow-sm')
+                  : (isDarkMode ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-700')
+                }`}
               >
                 <Clock size={16} /> Pomodoro
               </button>
@@ -581,25 +608,37 @@ const AuthenticatedApp: React.FC = () => {
               <div className="w-full md:w-16 flex flex-row md:flex-col items-center justify-center gap-4 md:gap-2">
                 {timerMode === 'pomodoro' && (
                   <>
-                     <span className="text-xs font-bold text-gray-400 uppercase tracking-widest md:hidden">Duration</span>
+                     <span className={`text-xs font-bold uppercase tracking-widest md:hidden ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>Duration</span>
                      <button 
                       onClick={() => !isActive && changeDuration(5)}
                       disabled={isActive}
-                      className="p-3 rounded-xl bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm transition-all active:scale-95"
+                      className={`p-3 rounded-xl border shadow-sm transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
+                        isDarkMode 
+                          ? 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700' 
+                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
                       title="Add 5 minutes"
                     >
                       <ChevronUp size={20} />
                     </button>
                     
-                    <div className="text-center bg-white px-3 py-2 rounded-xl border border-gray-200 shadow-sm min-w-[4rem]">
-                      <span className="text-xl font-bold text-gray-800">{settings.timerDuration}</span>
-                      <span className="text-xs text-gray-500 block">min</span>
+                    <div className={`text-center px-3 py-2 rounded-xl border shadow-sm min-w-[4rem] ${
+                      isDarkMode 
+                        ? 'bg-gray-800 border-gray-700' 
+                        : 'bg-white border-gray-200'
+                    }`}>
+                      <span className={`text-xl font-bold ${isDarkMode ? 'text-gray-100' : 'text-gray-800'}`}>{settings.timerDuration}</span>
+                      <span className={`text-xs block ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>min</span>
                     </div>
 
                     <button 
                       onClick={() => !isActive && changeDuration(-5)}
                       disabled={isActive}
-                      className="p-3 rounded-xl bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm transition-all active:scale-95"
+                      className={`p-3 rounded-xl border shadow-sm transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
+                        isDarkMode 
+                          ? 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700' 
+                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
                       title="Subtract 5 minutes"
                     >
                       <ChevronDown size={20} />
@@ -613,7 +652,11 @@ const AuthenticatedApp: React.FC = () => {
             <div className="flex items-center justify-center gap-6 z-10 w-full mt-2">
                <button 
                 onClick={resetTimer}
-                className="p-4 rounded-full bg-white text-gray-400 hover:text-gray-600 hover:bg-gray-50 shadow-md transition-all active:scale-95 border border-gray-100"
+                className={`p-4 rounded-full shadow-md transition-all active:scale-95 border ${
+                  isDarkMode 
+                    ? 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:bg-gray-700' 
+                    : 'bg-white border-gray-100 text-gray-400 hover:text-gray-600 hover:bg-gray-50'
+                }`}
                 title="Reset Timer"
               >
                 <RotateCcw size={24} />
@@ -635,8 +678,15 @@ const AuthenticatedApp: React.FC = () => {
                 onClick={handleFinishEarly}
                 disabled={(!startTime && timerMode === 'pomodoro') && stopwatchSeconds === 0}
                 className={`
-                  p-4 rounded-full bg-white shadow-md transition-all active:scale-95 border border-gray-100 group relative
-                  ${((startTime || isActive) || stopwatchSeconds > 0) ? 'text-green-600 hover:text-green-700 hover:bg-green-50' : 'text-gray-300 cursor-not-allowed'}
+                  p-4 rounded-full shadow-md transition-all active:scale-95 border group relative ${
+                    isDarkMode 
+                      ? 'bg-gray-800 border-gray-700' 
+                      : 'bg-white border-gray-100'
+                  }
+                  ${((startTime || isActive) || stopwatchSeconds > 0) 
+                    ? (isDarkMode ? 'text-green-400 hover:text-green-300 hover:bg-green-900/30' : 'text-green-600 hover:text-green-700 hover:bg-green-50')
+                    : (isDarkMode ? 'text-gray-600 cursor-not-allowed' : 'text-gray-300 cursor-not-allowed')
+                  }
                 `}
                 title="Finish & Save Session"
               >
@@ -645,8 +695,14 @@ const AuthenticatedApp: React.FC = () => {
             </div>
 
             {/* Session Details Input */}
-            <div className="w-full max-w-md bg-white p-6 rounded-3xl shadow-lg border border-gray-100 mt-8">
-              <div className="flex items-center gap-2 mb-4 text-gray-500 text-sm font-medium uppercase tracking-wide">
+            <div className={`w-full max-w-md p-6 rounded-3xl shadow-lg border mt-8 ${
+              isDarkMode 
+                ? 'bg-gray-800 border-gray-700' 
+                : 'bg-white border-gray-100'
+            }`}>
+              <div className={`flex items-center gap-2 mb-4 text-sm font-medium uppercase tracking-wide ${
+                isDarkMode ? 'text-gray-400' : 'text-gray-500'
+              }`}>
                 <Tag size={14} /> Session Notes
               </div>
               
@@ -657,13 +713,17 @@ const AuthenticatedApp: React.FC = () => {
                     placeholder="What are you working on?"
                     value={currentNotes}
                     onChange={(e) => setCurrentNotes(e.target.value)}
-                    className="w-full text-lg font-medium placeholder-gray-300 border-none focus:ring-0 p-0 text-gray-800 bg-transparent focus:outline-none"
+                    className={`w-full text-lg font-medium border-none focus:ring-0 p-0 bg-transparent focus:outline-none ${
+                      isDarkMode 
+                        ? 'text-gray-100 placeholder-gray-500' 
+                        : 'text-gray-800 placeholder-gray-300'
+                    }`}
                   />
                 </div>
                 <div className="flex flex-col gap-3">
                   <div className="flex flex-wrap gap-2 min-h-[28px]">
                     {currentTags.length === 0 && (
-                      <span className="text-gray-400 text-sm italic py-1">No tags added yet</span>
+                      <span className={`text-sm italic py-1 ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>No tags added yet</span>
                     )}
                     {currentTags.map(tag => (
                       <span key={tag} className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${colorTheme.secondary} ${colorTheme.accent} border border-transparent hover:border-current transition-all`}>
@@ -684,7 +744,11 @@ const AuthenticatedApp: React.FC = () => {
                         value={newTagInput}
                         onChange={(e) => setNewTagInput(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && addTag()}
-                        className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                        className={`w-full pl-9 pr-4 py-2 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all ${
+                          isDarkMode 
+                            ? 'bg-gray-700 border-gray-600 text-gray-100 placeholder-gray-400' 
+                            : 'bg-gray-50 border-gray-200'
+                        }`}
                       />
                     </div>
                     <button 
@@ -701,7 +765,7 @@ const AuthenticatedApp: React.FC = () => {
 
           </div>
         ) : (
-          <Dashboard sessions={sessions} updateSession={handleUpdateSession} />
+          <Dashboard sessions={sessions} updateSession={handleUpdateSession} darkMode={isDarkMode} />
         )}
       </main>
 
@@ -709,11 +773,13 @@ const AuthenticatedApp: React.FC = () => {
         isOpen={isSettingsOpen} 
         onClose={() => setIsSettingsOpen(false)}
         title="Settings"
+        darkMode={isDarkMode}
       >
         <SettingsForm 
           settings={settings} 
           onSave={handleSaveSettings}
           onCancel={() => setIsSettingsOpen(false)}
+          darkMode={isDarkMode}
         />
       </Modal>
 
@@ -721,22 +787,27 @@ const AuthenticatedApp: React.FC = () => {
         isOpen={isNewProjectModalOpen}
         onClose={() => setIsNewProjectModalOpen(false)}
         title="Create New Project"
+        darkMode={isDarkMode}
       >
         <div className="space-y-6">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Project Name</label>
+            <label className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>Project Name</label>
             <input 
               type="text" 
               value={newProjectName}
               onChange={(e) => setNewProjectName(e.target.value)}
               placeholder="e.g., Client Work, Learning"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              className={`w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none ${
+                isDarkMode 
+                  ? 'bg-gray-700 border-gray-600 text-gray-100 placeholder-gray-400' 
+                  : 'border-gray-300'
+              }`}
               autoFocus
             />
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Project Color</label>
+            <label className={`block text-sm font-medium mb-2 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>Project Color</label>
             <div className="flex gap-3">
               {(Object.keys(PROJECT_COLORS) as ProjectColor[]).map((c) => (
                  <button
@@ -745,7 +816,7 @@ const AuthenticatedApp: React.FC = () => {
                   className={`
                     w-10 h-10 rounded-full transition-all flex items-center justify-center
                     ${PROJECT_COLORS[c].primary} 
-                    ${newProjectColor === c ? 'ring-4 ring-offset-2 ring-gray-200 scale-110' : 'hover:scale-105 opacity-80 hover:opacity-100'}
+                    ${newProjectColor === c ? `ring-4 ring-offset-2 ${isDarkMode ? 'ring-gray-600' : 'ring-gray-200'} scale-110` : 'hover:scale-105 opacity-80 hover:opacity-100'}
                   `}
                 >
                   {newProjectColor === c && <CheckCircle size={16} className="text-white" />}
@@ -754,7 +825,7 @@ const AuthenticatedApp: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+          <div className={`flex justify-end gap-3 pt-4 border-t ${isDarkMode ? 'border-gray-700' : 'border-gray-100'}`}>
              <Button variant="secondary" onClick={() => setIsNewProjectModalOpen(false)}>Cancel</Button>
              <Button onClick={createProject} disabled={!newProjectName.trim()}>Create Project</Button>
           </div>
@@ -769,22 +840,27 @@ const AuthenticatedApp: React.FC = () => {
           setEditProjectColor('blue');
         }}
         title="Edit Project"
+        darkMode={isDarkMode}
       >
         <div className="space-y-6">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Project Name</label>
+            <label className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>Project Name</label>
             <input 
               type="text" 
               value={editProjectName}
               onChange={(e) => setEditProjectName(e.target.value)}
               placeholder="e.g., Client Work, Learning"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              className={`w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none ${
+                isDarkMode 
+                  ? 'bg-gray-700 border-gray-600 text-gray-100 placeholder-gray-400' 
+                  : 'border-gray-300'
+              }`}
               autoFocus
             />
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Project Color</label>
+            <label className={`block text-sm font-medium mb-2 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>Project Color</label>
             <div className="flex gap-3">
               {(Object.keys(PROJECT_COLORS) as ProjectColor[]).map((c) => (
                  <button
@@ -793,7 +869,7 @@ const AuthenticatedApp: React.FC = () => {
                   className={`
                     w-10 h-10 rounded-full transition-all flex items-center justify-center
                     ${PROJECT_COLORS[c].primary} 
-                    ${editProjectColor === c ? 'ring-4 ring-offset-2 ring-gray-200 scale-110' : 'hover:scale-105 opacity-80 hover:opacity-100'}
+                    ${editProjectColor === c ? `ring-4 ring-offset-2 ${isDarkMode ? 'ring-gray-600' : 'ring-gray-200'} scale-110` : 'hover:scale-105 opacity-80 hover:opacity-100'}
                   `}
                 >
                   {editProjectColor === c && <CheckCircle size={16} className="text-white" />}
@@ -802,7 +878,7 @@ const AuthenticatedApp: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+          <div className={`flex justify-end gap-3 pt-4 border-t ${isDarkMode ? 'border-gray-700' : 'border-gray-100'}`}>
              <Button variant="secondary" onClick={() => {
                setProjectToEdit(null);
                setEditProjectName('');
@@ -817,12 +893,13 @@ const AuthenticatedApp: React.FC = () => {
         isOpen={!!projectToDelete}
         onClose={() => setProjectToDelete(null)}
         title="Delete Project?"
+        darkMode={isDarkMode}
       >
         <div className="space-y-4">
-          <p className="text-gray-600">
+          <p className={isDarkMode ? 'text-gray-300' : 'text-gray-600'}>
             Are you sure you want to delete <strong>{projectToDelete?.name}</strong>?
           </p>
-          <p className="text-sm text-gray-500">
+          <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
             This will remove it from your active projects list. Your past sessions for this project will remain in your history.
           </p>
           <div className="flex justify-end gap-3 pt-4">

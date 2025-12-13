@@ -28,6 +28,7 @@ export interface Session {
 
 export interface Settings {
   timerDuration: number; // minutes
+  darkMode: boolean;
 }
 
 export type AnalyticsPeriod = 'day' | 'week' | 'month' | 'all';

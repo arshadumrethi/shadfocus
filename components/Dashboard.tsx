@@ -12,10 +12,11 @@ import { PROJECT_COLORS } from '../constants';
 interface DashboardProps {
   sessions: Session[];
   updateSession: (updatedSession: Session) => void;
+  deleteSession: (sessionId: string) => void;
   darkMode?: boolean;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, darkMode = false }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, deleteSession, darkMode = false }) => {
   const [period, setPeriod] = useState<AnalyticsPeriod>('week');
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [loadingAi, setLoadingAi] = useState(false);
@@ -56,19 +57,29 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
     return filteredSessions.reduce((acc, curr) => acc + curr.durationSeconds, 0);
   }, [filteredSessions]);
 
+  // Stack bar chart data per project per day
+  const projectKeys = useMemo(() => {
+    const names = new Set<string>();
+    filteredSessions.forEach(s => names.add(s.projectName || 'Unknown'));
+    return Array.from(names);
+  }, [filteredSessions]);
+
   const chartData = useMemo(() => {
-    // Group by Date
-    const grouped: Record<string, number> = {};
+    const grouped: Record<string, Record<string, number>> = {};
     filteredSessions.forEach(s => {
       const date = new Date(s.endTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      // Keep precision for short sessions (don't round to 0 yet)
-      grouped[date] = (grouped[date] || 0) + (s.durationSeconds / 60);
+      if (!grouped[date]) grouped[date] = {};
+      const key = s.projectName || 'Unknown';
+      grouped[date][key] = (grouped[date][key] || 0) + (s.durationSeconds / 60);
     });
 
-    return Object.entries(grouped).map(([date, minutes]) => ({
-      date,
-      minutes: parseFloat(minutes.toFixed(2)) // Keep 2 decimal places for chart
-    })).reverse(); // Oldest first for chart
+    return Object.entries(grouped).map(([date, projects]) => {
+      const entry: Record<string, any> = { date };
+      Object.entries(projects).forEach(([name, mins]) => {
+        entry[name] = Math.round(mins); // round minutes for display
+      });
+      return entry;
+    }).reverse(); // Oldest first for chart
   }, [filteredSessions]);
 
   const pieData = useMemo(() => {
@@ -101,6 +112,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
     // Actually if < 1 min, show "< 1m" or "0m"
     if (h === 0 && m === 0) return "< 1m";
     return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  };
+
+  const formatMinutes = (minutes: number): string => {
+    const roundedMins = Math.ceil(minutes);
+    if (roundedMins < 60) {
+      return `${roundedMins} mins`;
+    } else {
+      const hours = Math.floor(roundedMins / 60);
+      const mins = roundedMins % 60;
+      const hourLabel = hours === 1 ? 'hr' : 'hrs';
+      return `${hours} ${hourLabel} ${mins.toString().padStart(2, '0')} mins`;
+    }
   };
 
   const openEditModal = (session: Session) => {
@@ -227,7 +250,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
                 <th className="px-6 py-4">Time</th>
                 <th className="px-6 py-4">Duration</th>
                 <th className="px-6 py-4">Tags</th>
-                <th className="px-6 py-4 text-right">Edit</th>
+                <th className="px-2 py-4 w-12"></th>
               </tr>
             </thead>
             <tbody className={darkMode ? 'divide-y divide-gray-700' : 'divide-y divide-gray-100'}>
@@ -260,7 +283,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
                       }) : '-'}
                     </td>
                     <td className={`px-6 py-4 text-sm font-medium ${darkMode ? 'text-gray-200' : 'text-gray-700'}`}>
-                      {Math.ceil(session.durationSeconds / 60)} min
+                      {(() => {
+                        const totalMinutes = Math.ceil(session.durationSeconds / 60);
+                        if (totalMinutes < 60) {
+                          return `${totalMinutes} mins`;
+                        } else {
+                          const hours = Math.floor(totalMinutes / 60);
+                          const mins = totalMinutes % 60;
+                          const hourLabel = hours === 1 ? 'hr' : 'hrs';
+                          return `${hours} ${hourLabel} ${mins.toString().padStart(2, '0')} mins`;
+                        }
+                      })()}
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex flex-wrap gap-2">
@@ -276,17 +309,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
                         ))}
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-2 py-4 w-12">
                       <button 
                         onClick={() => openEditModal(session)}
-                        className={`p-1.5 rounded-lg transition-all opacity-0 group-hover:opacity-100 ${
+                        className={`p-1 rounded transition-all ${
                           darkMode 
                             ? 'text-gray-500 hover:text-blue-400 hover:bg-blue-900/30' 
                             : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'
                         }`}
                         title="Edit Session"
                       >
-                        <Pencil size={16} />
+                        <Pencil size={14} />
                       </button>
                     </td>
                   </tr>
@@ -306,9 +339,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
       {/* Charts Section (Moved Down) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Bar Chart */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 min-h-[300px]">
+        <div className={`p-6 rounded-2xl shadow-sm border min-h-[300px] ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}>
           <div className="flex justify-between items-center mb-6">
-            <h3 className="font-bold text-gray-800 text-lg">Activity Timeline</h3>
+            <h3 className={`font-bold text-lg ${darkMode ? 'text-gray-100' : 'text-gray-800'}`}>Activity Timeline</h3>
             <div className={`flex rounded-lg p-1 gap-1 ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
               {(['day', 'week', 'month'] as AnalyticsPeriod[]).map(p => (
                 <button
@@ -328,15 +361,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
           <div className="h-[250px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                <XAxis dataKey="date" axisLine={false} tickLine={false} fontSize={12} tickMargin={10} stroke="#9ca3af" />
-                <YAxis axisLine={false} tickLine={false} fontSize={12} stroke="#9ca3af" />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? '#374151' : '#f0f0f0'} />
+                <XAxis dataKey="date" axisLine={false} tickLine={false} fontSize={12} tickMargin={10} stroke={darkMode ? '#9ca3af' : '#9ca3af'} />
+                <YAxis axisLine={false} tickLine={false} fontSize={12} stroke={darkMode ? '#9ca3af' : '#9ca3af'} />
                 <Tooltip 
-                  cursor={{fill: '#f9fafb'}}
-                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                  formatter={(value: number) => [`${value} mins`, 'Duration']}
+                  cursor={{fill: darkMode ? '#111827' : '#f9fafb'}}
+                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', backgroundColor: darkMode ? '#1f2937' : '#fff', color: darkMode ? '#e5e7eb' : '#111827' }}
+                  formatter={(value: number, name: string) => [formatMinutes(value), name]}
                 />
-                <Bar dataKey="minutes" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={30} />
+                <Legend />
+                {projectKeys.map((key, idx) => {
+                  const palette = ['#60a5fa', '#34d399', '#f59e0b', '#a78bfa', '#f87171', '#fb7185', '#22d3ee', '#c084fc', '#fbbf24'];
+                  const fill = palette[idx % palette.length];
+                  return (
+                    <Bar key={key} dataKey={key} stackId="time" fill={fill} radius={[4, 4, 0, 0]} />
+                  );
+                })}
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -364,7 +404,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
                     <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
                   ))}
                 </Pie>
-                <Tooltip formatter={(value: number) => [`${value} mins`, 'Duration']} />
+                <Tooltip formatter={(value: number, name: string, props: any) => {
+                  const projectName = props.payload?.name || name;
+                  return [formatMinutes(value), projectName];
+                }} />
                 <Legend verticalAlign="bottom" height={36} iconType="circle" />
               </PieChart>
             </ResponsiveContainer>
@@ -416,10 +459,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
              </div>
            </div>
 
-           <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
-             <Button variant="secondary" onClick={() => setEditingSession(null)}>Cancel</Button>
-             <Button onClick={saveEdit}>Save Changes</Button>
-           </div>
+          <div className={`flex justify-end gap-3 pt-4 border-t ${darkMode ? 'border-gray-700' : 'border-gray-100'}`}>
+            <Button variant="danger" onClick={() => {
+              if (editingSession && window.confirm("Are you sure you want to delete this session?")) {
+                deleteSession(editingSession.id);
+                setEditingSession(null);
+              }
+            }}>
+              Delete Session
+            </Button>
+            <Button variant="secondary" onClick={() => setEditingSession(null)}>Cancel</Button>
+            <Button onClick={saveEdit}>Save Changes</Button>
+          </div>
         </div>
       </Modal>
 

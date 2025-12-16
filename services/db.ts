@@ -70,6 +70,11 @@ export const updateSessionInDb = async (userId: string, session: Session) => {
   });
 };
 
+export const deleteSession = async (userId: string, sessionId: string) => {
+  if (!db) return;
+  await db.collection(`users/${userId}/sessions`).doc(sessionId).delete();
+};
+
 // --- Settings ---
 
 export const subscribeToSettings = (userId: string, callback: (settings: Settings) => void) => {

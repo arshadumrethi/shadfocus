@@ -256,6 +256,12 @@ const AuthenticatedApp: React.FC = () => {
     }
   };
 
+  const handleDeleteSession = (sessionId: string) => {
+    if (user) {
+      db.deleteSession(user.uid, sessionId);
+    }
+  };
+
   const handleSaveSettings = (newSettings: Settings) => {
     if (user) {
       // Update settings immediately without closing modal or resetting timer
@@ -765,7 +771,12 @@ const AuthenticatedApp: React.FC = () => {
 
           </div>
         ) : (
-          <Dashboard sessions={sessions} updateSession={handleUpdateSession} darkMode={isDarkMode} />
+          <Dashboard 
+            sessions={sessions} 
+            updateSession={handleUpdateSession} 
+            deleteSession={handleDeleteSession}
+            darkMode={isDarkMode} 
+          />
         )}
       </main>
 

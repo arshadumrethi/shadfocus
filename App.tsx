@@ -381,9 +381,17 @@ const AuthenticatedApp: React.FC = () => {
       {/* Navigation */}
       <nav className={`fixed top-0 w-full p-4 flex justify-center z-40 backdrop-blur-md border-b ${isDarkMode ? 'bg-gray-800/90 border-gray-700' : 'bg-white/90 border-gray-100'}`}>
         <div className="w-full max-w-4xl flex justify-between items-center">
-          <h1 className={`text-xl font-bold flex items-center gap-2 ${isDarkMode ? 'text-gray-100' : 'text-gray-800'}`}>
+          <button
+            onClick={() => setView('timer')}
+            className={`text-xl font-bold flex items-center gap-2 transition-colors cursor-pointer ${
+              isDarkMode 
+                ? 'text-gray-100 hover:text-gray-300' 
+                : 'text-gray-800 hover:text-gray-600'
+            }`}
+            title="Go to Timer"
+          >
              ShadFocus
-          </h1>
+          </button>
           <div className="flex gap-2 items-center">
             <button 
               onClick={() => setView('timer')}

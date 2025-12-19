@@ -3,7 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   PieChart, Pie, Cell, Legend
 } from 'recharts';
-import { Calendar, Tag, Clock, TrendingUp, Sparkles, Filter, Pencil, X, Plus } from 'lucide-react';
+import { Calendar, Tag, Clock, TrendingUp, Sparkles, Filter, Pencil, X, Plus, CalendarDays } from 'lucide-react';
 import { Session, AnalyticsPeriod } from '../types';
 import { Button } from './ui/Button';
 import { Modal } from './ui/Modal';
@@ -56,6 +56,38 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
   const totalTime = useMemo(() => {
     return filteredSessions.reduce((acc, curr) => acc + curr.durationSeconds, 0);
   }, [filteredSessions]);
+
+  // Yesterday's sessions and summary
+  const yesterdaySessions = useMemo(() => {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const yesterdayStart = todayStart - (24 * 60 * 60 * 1000);
+    
+    return sessions.filter(s => {
+      const sessionDate = new Date(s.endTime);
+      const sessionDayStart = new Date(sessionDate.getFullYear(), sessionDate.getMonth(), sessionDate.getDate()).getTime();
+      return sessionDayStart >= yesterdayStart && sessionDayStart < todayStart;
+    });
+  }, [sessions]);
+
+  const yesterdayTotalTime = useMemo(() => {
+    return yesterdaySessions.reduce((acc, curr) => acc + curr.durationSeconds, 0);
+  }, [yesterdaySessions]);
+
+  const yesterdayByProject = useMemo(() => {
+    const grouped: Record<string, { time: number; sessions: Session[] }> = {};
+    yesterdaySessions.forEach(s => {
+      const projectName = s.projectName || 'Unknown';
+      if (!grouped[projectName]) {
+        grouped[projectName] = { time: 0, sessions: [] };
+      }
+      grouped[projectName].time += s.durationSeconds;
+      grouped[projectName].sessions.push(s);
+    });
+    return Object.entries(grouped)
+      .map(([name, data]) => ({ name, ...data }))
+      .sort((a, b) => b.time - a.time);
+  }, [yesterdaySessions]);
 
   // Stack bar chart data per project per day
   const projectKeys = useMemo(() => {
@@ -155,6 +187,109 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-12">
+      
+      {/* Yesterday's Summary - Prominent Section */}
+      <div className={`rounded-2xl shadow-lg border overflow-hidden ${
+        darkMode ? 'bg-gradient-to-br from-gray-800 to-gray-900 border-gray-700' : 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200'
+      }`}>
+        <div className={`p-6 border-b ${
+          darkMode ? 'border-gray-700' : 'border-blue-200'
+        }`}>
+          <div className="flex items-center gap-3 mb-2">
+            <CalendarDays className={darkMode ? 'text-blue-400' : 'text-blue-600'} size={24} />
+            <h2 className={`text-2xl font-bold ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>
+              Yesterday's Summary
+            </h2>
+          </div>
+          <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+            {yesterdaySessions.length === 0 
+              ? "No sessions recorded yesterday"
+              : `${yesterdaySessions.length} session${yesterdaySessions.length !== 1 ? 's' : ''} completed`
+            }
+          </p>
+        </div>
+        
+        {yesterdaySessions.length > 0 ? (
+          <div className="p-6 space-y-4">
+            {/* Total Time Card */}
+            <div className={`p-4 rounded-xl border ${
+              darkMode ? 'bg-gray-800/50 border-gray-700' : 'bg-white border-blue-200'
+            }`}>
+              <div className={`flex items-center justify-between ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                <span className="font-medium">Total Time</span>
+                <span className={`text-3xl font-bold ${darkMode ? 'text-blue-400' : 'text-blue-600'}`}>
+                  {formatDuration(yesterdayTotalTime)}
+                </span>
+              </div>
+            </div>
+
+            {/* Breakdown by Project */}
+            <div>
+              <h3 className={`font-semibold text-sm uppercase tracking-wide mb-3 ${
+                darkMode ? 'text-gray-400' : 'text-gray-600'
+              }`}>
+                Time by Project
+              </h3>
+              <div className="space-y-2">
+                {yesterdayByProject.map(({ name, time, sessions: projectSessions }) => {
+                  const percentage = (time / yesterdayTotalTime) * 100;
+                  const session = projectSessions[0];
+                  const colorTheme = PROJECT_COLORS[session?.color] || PROJECT_COLORS.blue;
+                  return (
+                    <div 
+                      key={name}
+                      className={`p-4 rounded-lg border ${
+                        darkMode ? 'bg-gray-800/50 border-gray-700' : 'bg-white border-gray-200'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-3 h-3 rounded-full ${colorTheme.primary}`}></div>
+                          <span className={`font-medium ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>
+                            {name}
+                          </span>
+                        </div>
+                        <span className={`font-bold ${darkMode ? 'text-gray-200' : 'text-gray-800'}`}>
+                          {formatDuration(time)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className={`flex-1 h-2 rounded-full overflow-hidden ${
+                          darkMode ? 'bg-gray-700' : 'bg-gray-200'
+                        }`}>
+                          <div 
+                            className={`h-full ${colorTheme.primary}`}
+                            style={{ width: `${percentage}%` }}
+                          ></div>
+                        </div>
+                        <span className={`text-xs font-medium ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                          {percentage.toFixed(0)}%
+                        </span>
+                      </div>
+                      {projectSessions.length > 0 && (
+                        <div className={`mt-2 text-xs ${darkMode ? 'text-gray-500' : 'text-gray-500'}`}>
+                          {projectSessions.length} session{projectSessions.length !== 1 ? 's' : ''}
+                          {projectSessions.some(s => s.notes) && (
+                            <span className="ml-2">
+                              • {projectSessions.filter(s => s.notes).map(s => s.notes).slice(0, 2).join(', ')}
+                              {projectSessions.filter(s => s.notes).length > 2 && '...'}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className={`p-6 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+            <Clock size={48} className={`mx-auto mb-3 ${darkMode ? 'text-gray-600' : 'text-gray-300'}`} />
+            <p>No time tracked yesterday. Start a session today to see your progress!</p>
+          </div>
+        )}
+      </div>
       
       {/* Overview Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

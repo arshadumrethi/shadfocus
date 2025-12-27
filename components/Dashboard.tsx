@@ -350,7 +350,86 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
         </div>
       )}
 
-      {/* History (Moved Up) */}
+      {/* Charts Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Bar Chart */}
+        <div className={`p-6 rounded-2xl shadow-sm border min-h-[300px] ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}>
+          <div className="flex justify-between items-center mb-6">
+            <h3 className={`font-bold text-lg ${darkMode ? 'text-gray-100' : 'text-gray-800'}`}>Activity Timeline</h3>
+            <div className={`flex rounded-lg p-1 gap-1 ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
+              {(['day', 'week', 'month'] as AnalyticsPeriod[]).map(p => (
+                <button
+                  key={p}
+                  onClick={() => setPeriod(p)}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
+                    period === p 
+                      ? (darkMode ? 'bg-gray-600 shadow text-gray-100' : 'bg-white shadow text-gray-900')
+                      : (darkMode ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-700')
+                  }`}
+                >
+                  {p.charAt(0).toUpperCase() + p.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="h-[250px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? '#374151' : '#f0f0f0'} />
+                <XAxis dataKey="date" axisLine={false} tickLine={false} fontSize={12} tickMargin={10} stroke={darkMode ? '#9ca3af' : '#9ca3af'} />
+                <YAxis axisLine={false} tickLine={false} fontSize={12} stroke={darkMode ? '#9ca3af' : '#9ca3af'} />
+                <Tooltip 
+                  cursor={{fill: darkMode ? '#111827' : '#f9fafb'}}
+                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', backgroundColor: darkMode ? '#1f2937' : '#fff', color: darkMode ? '#e5e7eb' : '#111827' }}
+                  formatter={(value: number, name: string) => [formatMinutes(value), name]}
+                />
+                <Legend />
+                {projectKeys.map((key, idx) => {
+                  const palette = ['#60a5fa', '#34d399', '#f59e0b', '#a78bfa', '#f87171', '#fb7185', '#22d3ee', '#c084fc', '#fbbf24'];
+                  const fill = palette[idx % palette.length];
+                  return (
+                    <Bar key={key} dataKey={key} stackId="time" fill={fill} radius={[4, 4, 0, 0]} />
+                  );
+                })}
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Pie Chart */}
+        <div className={`p-6 rounded-2xl shadow-sm border min-h-[300px] ${
+          darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'
+        }`}>
+           <h3 className={`font-bold text-lg mb-6 ${darkMode ? 'text-gray-100' : 'text-gray-800'}`}>Time per Project</h3>
+           <div className="h-[250px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={80}
+                  fill="#8884d8"
+                  paddingAngle={5}
+                  dataKey="value"
+                >
+                  {pieData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value: number, name: string, props: any) => {
+                  const projectName = props.payload?.name || name;
+                  return [formatMinutes(value), projectName];
+                }} />
+                <Legend verticalAlign="bottom" height={36} iconType="circle" />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+
+      {/* History */}
       <div className={`rounded-2xl shadow-sm border overflow-hidden ${
         darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'
       }`}>
@@ -468,85 +547,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
               )}
             </tbody>
           </table>
-        </div>
-      </div>
-
-      {/* Charts Section (Moved Down) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Bar Chart */}
-        <div className={`p-6 rounded-2xl shadow-sm border min-h-[300px] ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}>
-          <div className="flex justify-between items-center mb-6">
-            <h3 className={`font-bold text-lg ${darkMode ? 'text-gray-100' : 'text-gray-800'}`}>Activity Timeline</h3>
-            <div className={`flex rounded-lg p-1 gap-1 ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
-              {(['day', 'week', 'month'] as AnalyticsPeriod[]).map(p => (
-                <button
-                  key={p}
-                  onClick={() => setPeriod(p)}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
-                    period === p 
-                      ? (darkMode ? 'bg-gray-600 shadow text-gray-100' : 'bg-white shadow text-gray-900')
-                      : (darkMode ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-700')
-                  }`}
-                >
-                  {p.charAt(0).toUpperCase() + p.slice(1)}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="h-[250px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? '#374151' : '#f0f0f0'} />
-                <XAxis dataKey="date" axisLine={false} tickLine={false} fontSize={12} tickMargin={10} stroke={darkMode ? '#9ca3af' : '#9ca3af'} />
-                <YAxis axisLine={false} tickLine={false} fontSize={12} stroke={darkMode ? '#9ca3af' : '#9ca3af'} />
-                <Tooltip 
-                  cursor={{fill: darkMode ? '#111827' : '#f9fafb'}}
-                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', backgroundColor: darkMode ? '#1f2937' : '#fff', color: darkMode ? '#e5e7eb' : '#111827' }}
-                  formatter={(value: number, name: string) => [formatMinutes(value), name]}
-                />
-                <Legend />
-                {projectKeys.map((key, idx) => {
-                  const palette = ['#60a5fa', '#34d399', '#f59e0b', '#a78bfa', '#f87171', '#fb7185', '#22d3ee', '#c084fc', '#fbbf24'];
-                  const fill = palette[idx % palette.length];
-                  return (
-                    <Bar key={key} dataKey={key} stackId="time" fill={fill} radius={[4, 4, 0, 0]} />
-                  );
-                })}
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Pie Chart */}
-        <div className={`p-6 rounded-2xl shadow-sm border min-h-[300px] ${
-          darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'
-        }`}>
-           <h3 className={`font-bold text-lg mb-6 ${darkMode ? 'text-gray-100' : 'text-gray-800'}`}>Time per Project</h3>
-           <div className="h-[250px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={pieData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={80}
-                  fill="#8884d8"
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {pieData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value: number, name: string, props: any) => {
-                  const projectName = props.payload?.name || name;
-                  return [formatMinutes(value), projectName];
-                }} />
-                <Legend verticalAlign="bottom" height={36} iconType="circle" />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
         </div>
       </div>
 

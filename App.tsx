@@ -460,7 +460,7 @@ const AuthenticatedApp: React.FC = () => {
                   <Button 
                     onClick={() => setView('dashboard')}
                     variant="secondary"
-                    className="!rounded-lg px-6 py-3 shadow-lg shadow-gray-300/50 hover:shadow-xl hover:shadow-gray-300/70"
+                    className="!rounded-lg px-6 py-3 shadow-lg shadow-gray-300/50 hover:shadow-xl hover:shadow-gray-300/70 underline"
                   >
                     Go to Dashboard
                   </Button>

@@ -31,4 +31,4 @@ export interface Settings {
   darkMode: boolean;
 }
 
-export type AnalyticsPeriod = 'day' | 'week' | 'month' | 'all';
+export type AnalyticsPeriod = 'day' | 'last7days' | 'last30days' | 'all';

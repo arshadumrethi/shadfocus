@@ -17,7 +17,7 @@ interface DashboardProps {
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, deleteSession, darkMode = false }) => {
-  const [period, setPeriod] = useState<AnalyticsPeriod>('week');
+  const [period, setPeriod] = useState<AnalyticsPeriod>('all');
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [loadingAi, setLoadingAi] = useState(false);
   const [filterTag, setFilterTag] = useState<string>('');
@@ -32,17 +32,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
     let filtered = [...sessions];
     
     // Time filter
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    
-    if (period === 'day') {
-      filtered = filtered.filter(s => s.endTime >= todayStart);
-    } else if (period === 'week') {
-      const weekStart = todayStart - (7 * 24 * 60 * 60 * 1000);
-      filtered = filtered.filter(s => s.endTime >= weekStart);
-    } else if (period === 'month') {
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-      filtered = filtered.filter(s => s.endTime >= monthStart);
+    if (period !== 'all') {
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      
+      if (period === 'day') {
+        filtered = filtered.filter(s => s.endTime >= todayStart);
+      } else if (period === 'last7days') {
+        const last7DaysStart = Date.now() - (7 * 24 * 60 * 60 * 1000);
+        filtered = filtered.filter(s => s.endTime >= last7DaysStart);
+      } else if (period === 'last30days') {
+        const last30DaysStart = Date.now() - (30 * 24 * 60 * 60 * 1000);
+        filtered = filtered.filter(s => s.endTime >= last30DaysStart);
+      }
     }
 
     // Tag filter
@@ -89,6 +91,86 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
       .sort((a, b) => b.time - a.time);
   }, [yesterdaySessions]);
 
+  // Helper function to get last work day where activity was logged (any day, not today)
+  const getLastWorkDay = useMemo(() => {
+    // Get today's date at midnight
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayTime = today.getTime();
+    
+    // Get all unique days with sessions (excluding today)
+    const dayDates: Date[] = [];
+    const seenDays = new Set<string>();
+    
+    sessions.forEach(s => {
+      const date = new Date(s.endTime);
+      // Normalize to midnight in local timezone
+      const year = date.getFullYear();
+      const month = date.getMonth();
+      const day = date.getDate();
+      const normalizedDate = new Date(year, month, day);
+      const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      
+      // Only include days that are not today and haven't been seen yet
+      if (!seenDays.has(dateKey) && normalizedDate.getTime() < todayTime) {
+        seenDays.add(dateKey);
+        dayDates.push(normalizedDate);
+      }
+    });
+
+    // Sort by date (newest first) and get the most recent
+    dayDates.sort((a, b) => b.getTime() - a.getTime());
+    
+    let foundWorkDay: Date;
+    if (dayDates.length > 0) {
+      foundWorkDay = dayDates[0];
+    } else {
+      // If no work day found, use yesterday
+      foundWorkDay = new Date(today);
+      foundWorkDay.setDate(foundWorkDay.getDate() - 1);
+    }
+    
+    const dayStart = new Date(foundWorkDay.getFullYear(), foundWorkDay.getMonth(), foundWorkDay.getDate()).getTime();
+    const dayEnd = dayStart + (24 * 60 * 60 * 1000);
+    
+    return {
+      date: foundWorkDay,
+      dayStart,
+      dayEnd,
+      dayName: foundWorkDay.toLocaleDateString('en-US', { weekday: 'long' }),
+      dateString: foundWorkDay.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    };
+  }, [sessions]);
+
+  // Last work day sessions and summary
+  const lastWorkDaySessions = useMemo(() => {
+    return sessions.filter(s => {
+      const sessionDate = new Date(s.endTime);
+      // Normalize to midnight to match the logic in getLastWorkDay
+      const sessionDayStart = new Date(sessionDate.getFullYear(), sessionDate.getMonth(), sessionDate.getDate()).getTime();
+      return sessionDayStart >= getLastWorkDay.dayStart && sessionDayStart < getLastWorkDay.dayEnd;
+    });
+  }, [sessions, getLastWorkDay]);
+
+  const lastWorkDayTotalTime = useMemo(() => {
+    return lastWorkDaySessions.reduce((acc, curr) => acc + curr.durationSeconds, 0);
+  }, [lastWorkDaySessions]);
+
+  const lastWorkDayByProject = useMemo(() => {
+    const grouped: Record<string, { time: number; sessions: Session[] }> = {};
+    lastWorkDaySessions.forEach(s => {
+      const projectName = s.projectName || 'Unknown';
+      if (!grouped[projectName]) {
+        grouped[projectName] = { time: 0, sessions: [] };
+      }
+      grouped[projectName].time += s.durationSeconds;
+      grouped[projectName].sessions.push(s);
+    });
+    return Object.entries(grouped)
+      .map(([name, data]) => ({ name, ...data }))
+      .sort((a, b) => b.time - a.time);
+  }, [lastWorkDaySessions]);
+
   // Stack bar chart data per project per day
   const projectKeys = useMemo(() => {
     const names = new Set<string>();
@@ -129,6 +211,37 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
 
   // Color palette for charts
   const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#ec4899', '#6366f1'];
+
+  // Session duration distribution data
+  const durationDistribution = useMemo(() => {
+    const buckets = [
+      { label: '0-15 min', min: 0, max: 15 },
+      { label: '15-30 min', min: 15, max: 30 },
+      { label: '30-60 min', min: 30, max: 60 },
+      { label: '1-2 hrs', min: 60, max: 120 },
+      { label: '2-4 hrs', min: 120, max: 240 },
+      { label: '4+ hrs', min: 240, max: Infinity }
+    ];
+
+    const counts = buckets.map(() => 0);
+    const totalSessions = filteredSessions.length;
+
+    filteredSessions.forEach(session => {
+      const minutes = session.durationSeconds / 60;
+      for (let i = 0; i < buckets.length; i++) {
+        if (minutes >= buckets[i].min && minutes < buckets[i].max) {
+          counts[i]++;
+          break;
+        }
+      }
+    });
+
+    return buckets.map((bucket, index) => ({
+      label: bucket.label,
+      count: counts[index],
+      percentage: totalSessions > 0 ? (counts[index] / totalSessions) * 100 : 0
+    }));
+  }, [filteredSessions]);
 
   const handleGetInsights = async () => {
     // Coming soon placeholder for AI insights in v1
@@ -185,10 +298,155 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
     setEditTags(editTags.filter(t => t !== tag));
   };
 
+  const getPeriodLabel = (period: AnalyticsPeriod): string => {
+    switch (period) {
+      case 'day': return 'Today';
+      case 'last7days': return 'Last 7 Days';
+      case 'last30days': return 'Last 30 Days';
+      case 'all': return 'All Time';
+      default: return period;
+    }
+  };
+
+  // GitHub-style heatmap data (71 days: today + previous 70 days)
+  const heatmapData = useMemo(() => {
+    // Calculate total time per day
+    const dayData: Record<string, number> = {}; // dateKey -> total minutes
+    sessions.forEach(s => {
+      const date = new Date(s.endTime);
+      const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      const minutes = Math.round(s.durationSeconds / 60);
+      dayData[dateKey] = (dayData[dateKey] || 0) + minutes;
+    });
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - 70); // 70 days back (71 days total including today)
+
+    // Get max value for intensity scaling
+    const maxMinutes = Math.max(...Object.values(dayData), 1);
+    
+    // Get intensity level (0-4, similar to GitHub)
+    const getIntensity = (minutes: number): number => {
+      if (minutes === 0) return 0;
+      const ratio = minutes / maxMinutes;
+      if (ratio <= 0.25) return 1;
+      if (ratio <= 0.5) return 2;
+      if (ratio <= 0.75) return 3;
+      return 4;
+    };
+
+    // Create array of all days
+    const allDays: Array<{ date: Date; minutes: number; intensity: number; dateKey: string; isToday: boolean }> = [];
+    const currentDate = new Date(startDate);
+    while (currentDate <= today) {
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth() + 1;
+      const day = currentDate.getDate();
+      const dateKey = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const minutes = dayData[dateKey] || 0;
+      const dateNormalized = new Date(year, currentDate.getMonth(), day);
+      const isToday = dateNormalized.getTime() === today.getTime();
+      
+      allDays.push({
+        date: new Date(dateNormalized),
+        minutes,
+        intensity: getIntensity(minutes),
+        dateKey,
+        isToday
+      });
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    // Organize into weeks (columns) with days of week (rows)
+    // GitHub style: Sunday=0 (top), Saturday=6 (bottom)
+    const weeks: Array<Array<{ date: Date; minutes: number; intensity: number; dateKey: string; isToday: boolean } | null>> = [];
+    
+    // Find the first Sunday before or on startDate
+    const firstDate = new Date(startDate);
+    const dayOfWeek = firstDate.getDay();
+    const daysToSubtract = dayOfWeek; // Days to go back to Sunday
+    const firstSunday = new Date(firstDate);
+    firstSunday.setDate(firstSunday.getDate() - daysToSubtract);
+
+    // Build weeks - each week is a column (Sunday to Saturday)
+    // Only include weeks that have at least one day in our range
+    let currentWeekStart = new Date(firstSunday);
+    const todayTime = today.getTime();
+    
+    while (currentWeekStart <= today) {
+      const week: Array<{ date: Date; minutes: number; intensity: number; dateKey: string; isToday: boolean } | null> = [];
+      let hasDaysInRange = false;
+      
+      for (let dayOfWeek = 0; dayOfWeek < 7; dayOfWeek++) {
+        const weekDayDate = new Date(currentWeekStart);
+        weekDayDate.setDate(weekDayDate.getDate() + dayOfWeek);
+        const weekDayTime = weekDayDate.getTime();
+        
+        if (weekDayTime < startDate.getTime()) {
+          week.push(null); // Before range
+        } else if (weekDayTime > todayTime) {
+          week.push(null); // After range - don't show future days
+        } else {
+          hasDaysInRange = true;
+          const year = weekDayDate.getFullYear();
+          const month = weekDayDate.getMonth() + 1;
+          const day = weekDayDate.getDate();
+          const dateKey = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          const dayInfo = allDays.find(d => d.dateKey === dateKey);
+          week.push(dayInfo || {
+            date: new Date(weekDayDate),
+            minutes: 0,
+            intensity: 0,
+            dateKey,
+            isToday: weekDayTime === todayTime
+          });
+        }
+      }
+      
+      // Only add week if it has days in our range
+      if (hasDaysInRange) {
+        weeks.push(week);
+      }
+      
+      // Move to next week
+      currentWeekStart.setDate(currentWeekStart.getDate() + 7);
+      
+      // Stop if we've passed today
+      if (currentWeekStart.getTime() > todayTime) {
+        break;
+      }
+    }
+
+    // Get month labels (show first occurrence of each month in the range)
+    const monthLabels: Array<{ weekIndex: number; month: string }> = [];
+    const seenMonths = new Set<string>();
+    
+    weeks.forEach((week, weekIndex) => {
+      // Find the first non-null day in this week
+      const firstDay = week.find(day => day !== null);
+      if (firstDay) {
+        const monthKey = `${firstDay.date.getFullYear()}-${firstDay.date.getMonth()}`;
+        // Show month label on the first week that contains a day from this month
+        // Check if this is the first occurrence of this month
+        if (!seenMonths.has(monthKey)) {
+          seenMonths.add(monthKey);
+          monthLabels.push({
+            weekIndex,
+            month: firstDay.date.toLocaleDateString('en-US', { month: 'short' })
+          });
+        }
+      }
+    });
+
+    return { weeks, monthLabels, maxMinutes };
+  }, [sessions]);
+
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-12">
       
-      {/* Yesterday's Summary - Prominent Section */}
+      {/* Last Work Day Summary */}
       <div className={`rounded-2xl shadow-lg border overflow-hidden ${
         darkMode ? 'bg-gradient-to-br from-gray-800 to-gray-900 border-gray-700' : 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200'
       }`}>
@@ -198,18 +456,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
           <div className="flex items-center gap-3 mb-2">
             <CalendarDays className={darkMode ? 'text-blue-400' : 'text-blue-600'} size={24} />
             <h2 className={`text-2xl font-bold ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>
-              Yesterday's Summary
+              Last Work Day Summary
             </h2>
           </div>
           <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-            {yesterdaySessions.length === 0 
-              ? "No sessions recorded yesterday"
-              : `${yesterdaySessions.length} session${yesterdaySessions.length !== 1 ? 's' : ''} completed`
+            {lastWorkDaySessions.length === 0
+              ? `No sessions recorded on ${getLastWorkDay.dayName}, ${getLastWorkDay.dateString}`
+              : `${lastWorkDaySessions.length} session${lastWorkDaySessions.length !== 1 ? 's' : ''} completed on ${getLastWorkDay.dayName}, ${getLastWorkDay.dateString}`
             }
           </p>
         </div>
         
-        {yesterdaySessions.length > 0 ? (
+        {lastWorkDaySessions.length > 0 ? (
           <div className="p-6 space-y-4">
             {/* Total Time Card */}
             <div className={`p-4 rounded-xl border ${
@@ -218,7 +476,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
               <div className={`flex items-center justify-between ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
                 <span className="font-medium">Total Time</span>
                 <span className={`text-3xl font-bold ${darkMode ? 'text-blue-400' : 'text-blue-600'}`}>
-                  {formatDuration(yesterdayTotalTime)}
+                  {formatDuration(lastWorkDayTotalTime)}
                 </span>
               </div>
             </div>
@@ -231,8 +489,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
                 Time by Project
               </h3>
               <div className="space-y-2">
-                {yesterdayByProject.map(({ name, time, sessions: projectSessions }) => {
-                  const percentage = (time / yesterdayTotalTime) * 100;
+                {lastWorkDayByProject.map(({ name, time, sessions: projectSessions }) => {
+                  const percentage = (time / lastWorkDayTotalTime) * 100;
                   const session = projectSessions[0];
                   const colorTheme = PROJECT_COLORS[session?.color] || PROJECT_COLORS.blue;
                   return (
@@ -286,9 +544,207 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
         ) : (
           <div className={`p-6 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
             <Clock size={48} className={`mx-auto mb-3 ${darkMode ? 'text-gray-600' : 'text-gray-300'}`} />
-            <p>No time tracked yesterday. Start a session today to see your progress!</p>
+            <p>No time tracked on {getLastWorkDay.dayName}, {getLastWorkDay.dateString}. Start a session to see your progress!</p>
           </div>
         )}
+      </div>
+
+      {/* Heatmap and Duration Distribution Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Calendar View - GitHub Style Heatmap */}
+        <div className={`p-6 rounded-2xl shadow-sm border min-h-[300px] ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}>
+          <div className="mb-6">
+            <h3 className={`font-bold text-lg ${darkMode ? 'text-gray-100' : 'text-gray-800'}`}>Activity Heatmap</h3>
+            <p className={`text-xs mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+              Last 71 days of activity
+            </p>
+          </div>
+          <div>
+            <div className="flex gap-2 items-start">
+              {/* Day labels on the left - moved down by one row */}
+              <div className="flex flex-col gap-2 pr-3 flex-shrink-0">
+                {/* Spacer to move labels down by one row (matches month labels row height + margin) */}
+                <div className="h-7"></div>
+                {['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].map((day, idx) => (
+                  <div key={idx} className={`h-5 flex items-center justify-end text-xs font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                    {day}
+                  </div>
+                ))}
+              </div>
+              
+              {/* Heatmap grid */}
+              <div className="flex-1 min-w-0">
+                {/* Month labels at the top */}
+                <div className="flex gap-2 mb-2">
+                  {heatmapData.weeks.map((week, weekIndex) => {
+                    const monthLabel = heatmapData.monthLabels.find(m => m.weekIndex === weekIndex);
+                    return (
+                      <div key={weekIndex} className="w-5 flex items-start justify-center">
+                        {monthLabel && (
+                          <span className={`text-xs font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                            {monthLabel.month.toUpperCase()}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                
+                {/* Heatmap grid */}
+                <div className="flex gap-2">
+                  {heatmapData.weeks.map((week, weekIndex) => (
+                      <div key={weekIndex} className="flex flex-col gap-2">
+                        {week.map((day, dayIndex) => {
+                          if (day === null) {
+                            return <div key={dayIndex} className="w-5 h-5"></div>;
+                          }
+                          
+                          // GitHub-style color intensity (green shades) - today uses same green colors
+                          // Make no-activity cells more visible with border
+                          const getColor = (intensity: number) => {
+                            switch (intensity) {
+                              case 0: return darkMode ? 'bg-gray-700 border border-gray-600' : 'bg-gray-200 border border-gray-300';
+                              case 1: return darkMode ? 'bg-green-900/60' : 'bg-green-100';
+                              case 2: return darkMode ? 'bg-green-800/70' : 'bg-green-300';
+                              case 3: return darkMode ? 'bg-green-700/80' : 'bg-green-500';
+                              case 4: return darkMode ? 'bg-green-600' : 'bg-green-600';
+                              default: return darkMode ? 'bg-gray-700 border border-gray-600' : 'bg-gray-200 border border-gray-300';
+                            }
+                          };
+                          
+                          const hours = Math.floor(day.minutes / 60);
+                          const mins = day.minutes % 60;
+                          const timeStr = hours > 0 
+                            ? `${hours}h ${mins}m` 
+                            : `${mins}m`;
+                          const dateStr = day.date.toLocaleDateString('en-US', { 
+                            weekday: 'long', 
+                            month: 'short', 
+                            day: 'numeric',
+                            year: 'numeric'
+                          });
+                          
+                          return (
+                            <div
+                              key={dayIndex}
+                              className={`w-5 h-5 rounded ${getColor(day.intensity)} transition-all hover:ring-2 hover:ring-blue-400 hover:scale-110 cursor-pointer ${day.isToday ? 'ring-2 ring-blue-400' : ''}`}
+                              title={`${dateStr}${day.minutes > 0 ? `: ${timeStr}` : ': No activity'}`}
+                            />
+                          );
+                        })}
+                      </div>
+                    ))}
+                </div>
+              </div>
+            </div>
+            
+            {/* Legend */}
+            <div className="mt-6 flex items-center justify-center gap-4">
+              <div className="flex items-center gap-2 text-sm">
+                <span className={`font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Less</span>
+                <div className="flex gap-1">
+                  <div className={`w-5 h-5 rounded ${darkMode ? 'bg-gray-700 border border-gray-600' : 'bg-gray-200 border border-gray-300'}`}></div>
+                  <div className={`w-5 h-5 rounded ${darkMode ? 'bg-green-900/60' : 'bg-green-100'}`}></div>
+                  <div className={`w-5 h-5 rounded ${darkMode ? 'bg-green-800/70' : 'bg-green-300'}`}></div>
+                  <div className={`w-5 h-5 rounded ${darkMode ? 'bg-green-700/80' : 'bg-green-500'}`}></div>
+                  <div className={`w-5 h-5 rounded ${darkMode ? 'bg-green-600' : 'bg-green-600'}`}></div>
+                </div>
+                <span className={`font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>More</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Session Duration Distribution Histogram */}
+        <div className={`p-6 rounded-2xl shadow-sm border min-h-[300px] ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}>
+          <div className="mb-6">
+            <h3 className={`font-bold text-lg ${darkMode ? 'text-gray-100' : 'text-gray-800'}`}>Session Duration Distribution</h3>
+            <p className={`text-xs mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+              Distribution of session lengths
+            </p>
+          </div>
+          <div className="h-[250px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={durationDistribution}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? '#374151' : '#f0f0f0'} />
+                <XAxis 
+                  dataKey="label" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  fontSize={11} 
+                  tickMargin={10} 
+                  stroke={darkMode ? '#9ca3af' : '#9ca3af'}
+                  angle={-45}
+                  textAnchor="end"
+                  height={60}
+                />
+                <YAxis 
+                  axisLine={false} 
+                  tickLine={false} 
+                  fontSize={12} 
+                  stroke={darkMode ? '#9ca3af' : '#9ca3af'}
+                  label={{ 
+                    value: 'Sessions', 
+                    angle: -90, 
+                    position: 'insideLeft',
+                    style: { textAnchor: 'middle', fill: darkMode ? '#9ca3af' : '#9ca3af' }
+                  }}
+                />
+                <Tooltip 
+                  cursor={{fill: darkMode ? '#111827' : '#f9fafb'}}
+                  contentStyle={{ 
+                    borderRadius: '8px', 
+                    border: 'none', 
+                    boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', 
+                    backgroundColor: darkMode ? '#1f2937' : '#fff', 
+                    color: darkMode ? '#e5e7eb' : '#111827' 
+                  }}
+                  formatter={(value: number, name: string, props: any) => {
+                    const percentage = props.payload?.percentage || 0;
+                    return [
+                      `${value} session${value !== 1 ? 's' : ''} (${percentage.toFixed(1)}%)`,
+                      'Count'
+                    ];
+                  }}
+                />
+                <Bar 
+                  dataKey="count" 
+                  fill={CHART_COLORS[0]} 
+                  radius={[4, 4, 0, 0]}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+      
+      {/* Global Period Selector */}
+      <div className={`p-4 rounded-2xl shadow-sm border ${
+        darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'
+      }`}>
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center gap-2">
+            <Calendar className={darkMode ? 'text-gray-400' : 'text-gray-500'} size={18} />
+            <span className={`font-medium text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+              View Period:
+            </span>
+          </div>
+          <div className={`flex rounded-lg p-1 gap-1 flex-wrap ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
+            {(['day', 'last7days', 'last30days', 'all'] as AnalyticsPeriod[]).map(p => (
+              <button
+                key={p}
+                onClick={() => setPeriod(p)}
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
+                  period === p 
+                    ? (darkMode ? 'bg-gray-600 shadow text-gray-100' : 'bg-white shadow text-gray-900')
+                    : (darkMode ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-700')
+                }`}
+              >
+                {getPeriodLabel(p)}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
       
       {/* Overview Cards */}
@@ -354,23 +810,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Bar Chart */}
         <div className={`p-6 rounded-2xl shadow-sm border min-h-[300px] ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}>
-          <div className="flex justify-between items-center mb-6">
+          <div className="mb-6">
             <h3 className={`font-bold text-lg ${darkMode ? 'text-gray-100' : 'text-gray-800'}`}>Activity Timeline</h3>
-            <div className={`flex rounded-lg p-1 gap-1 ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
-              {(['day', 'week', 'month'] as AnalyticsPeriod[]).map(p => (
-                <button
-                  key={p}
-                  onClick={() => setPeriod(p)}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
-                    period === p 
-                      ? (darkMode ? 'bg-gray-600 shadow text-gray-100' : 'bg-white shadow text-gray-900')
-                      : (darkMode ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-700')
-                  }`}
-                >
-                  {p.charAt(0).toUpperCase() + p.slice(1)}
-                </button>
-              ))}
-            </div>
           </div>
           <div className="h-[250px] w-full">
             <ResponsiveContainer width="100%" height="100%">

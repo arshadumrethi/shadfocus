@@ -123,11 +123,30 @@ export const subscribeToActiveTimer = (userId: string, callback: (timer: ActiveT
 
 export const startTimer = async (userId: string, timerData: Omit<ActiveTimer, 'id'>) => {
   if (!db) return;
-  await db.collection('users').doc(userId).collection('activeTimers').doc('current').set({
-    ...timerData,
+  
+  // Build the document, explicitly excluding undefined values
+  const timerDoc: any = {
+    mode: timerData.mode,
+    isActive: timerData.isActive,
     startTime: Date.now(), // Original start time, never changes
-    pausedDuration: 0 // Total paused time in seconds
-  });
+    pausedDuration: timerData.pausedDuration ?? 0, // Total paused time in seconds
+    projectId: timerData.projectId,
+    projectName: timerData.projectName,
+    notes: timerData.notes || '',
+    tags: timerData.tags || [],
+  };
+  
+  // Only include initialDuration if it's defined (for pomodoro mode)
+  if (timerData.initialDuration !== undefined && timerData.initialDuration !== null) {
+    timerDoc.initialDuration = timerData.initialDuration;
+  }
+  
+  // Include pausedAt if it exists
+  if (timerData.pausedAt !== undefined && timerData.pausedAt !== null) {
+    timerDoc.pausedAt = timerData.pausedAt;
+  }
+  
+  await db.collection('users').doc(userId).collection('activeTimers').doc('current').set(timerDoc);
 };
 
 export const pauseTimer = async (userId: string) => {

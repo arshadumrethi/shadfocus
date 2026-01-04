@@ -362,10 +362,22 @@ const AuthenticatedApp: React.FC = () => {
       // If timer is running and duration changed, update activeTimer
       if (activeTimer && activeTimer.mode === 'pomodoro' && activeTimer.isActive && newSettings.timerDuration !== settings.timerDuration) {
         // Update the initialDuration in activeTimer
-        db.startTimer(user.uid, {
-          ...activeTimer,
+        // Explicitly construct timerData to avoid undefined values
+        const timerData: Omit<ActiveTimer, 'id'> = {
+          mode: activeTimer.mode,
+          isActive: activeTimer.isActive,
+          startTime: activeTimer.startTime,
+          pausedDuration: activeTimer.pausedDuration || 0,
+          projectId: activeTimer.projectId,
+          projectName: activeTimer.projectName,
+          notes: activeTimer.notes || '',
+          tags: activeTimer.tags || [],
           initialDuration: newSettings.timerDuration * 60,
-        });
+        };
+        if (activeTimer.pausedAt) {
+          timerData.pausedAt = activeTimer.pausedAt;
+        }
+        db.startTimer(user.uid, timerData);
       }
       // Don't close modal - let user continue adjusting settings
     }
@@ -379,17 +391,23 @@ const AuthenticatedApp: React.FC = () => {
       const projectToUse = activeProject || projects[0] || DEFAULT_PROJECTS[0];
       const initialDuration = settings.timerDuration * 60;
       
-      db.startTimer(user.uid, {
+      const timerData: Omit<ActiveTimer, 'id'> = {
         mode: selectedMode,
         isActive: true,
         startTime: Date.now(),
         pausedDuration: 0,
-        initialDuration: selectedMode === 'pomodoro' ? initialDuration : undefined,
         projectId: projectToUse.id,
         projectName: projectToUse.name,
         notes: currentNotes,
         tags: currentTags,
-      });
+      };
+      
+      // Only add initialDuration for pomodoro mode
+      if (selectedMode === 'pomodoro') {
+        timerData.initialDuration = initialDuration;
+      }
+      
+      db.startTimer(user.uid, timerData);
     } else if (activeTimer.isActive) {
       // Pause timer
       db.pauseTimer(user.uid);
@@ -407,10 +425,22 @@ const AuthenticatedApp: React.FC = () => {
        db.updateSettingsInDb(user.uid, { ...settings, timerDuration: newDuration });
        // If timer is active and pomodoro, update activeTimer
        if (activeTimer && activeTimer.mode === 'pomodoro' && activeTimer.isActive) {
-         db.startTimer(user.uid, {
-           ...activeTimer,
+         // Explicitly construct timerData to avoid undefined values
+         const timerData: Omit<ActiveTimer, 'id'> = {
+           mode: activeTimer.mode,
+           isActive: activeTimer.isActive,
+           startTime: activeTimer.startTime,
+           pausedDuration: activeTimer.pausedDuration || 0,
+           projectId: activeTimer.projectId,
+           projectName: activeTimer.projectName,
+           notes: activeTimer.notes || '',
+           tags: activeTimer.tags || [],
            initialDuration: newDuration * 60,
-         });
+         };
+         if (activeTimer.pausedAt) {
+           timerData.pausedAt = activeTimer.pausedAt;
+         }
+         db.startTimer(user.uid, timerData);
        }
     }
   };

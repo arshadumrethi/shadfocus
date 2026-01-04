@@ -78,6 +78,7 @@ const AuthenticatedApp: React.FC = () => {
 
   const displayUpdateRef = useRef<number | null>(null); // For UI update interval
   const menuButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const isSyncingFromFirestore = useRef(false); // Flag to prevent infinite loops
 
   const activeProject = projects.length > 0 
     ? (projects.find(p => p.id === activeProjectId) || projects[0] || DEFAULT_PROJECTS[0])
@@ -107,6 +108,19 @@ const AuthenticatedApp: React.FC = () => {
 
     const unsubscribeSettings = db.subscribeToSettings(user.uid, (data) => {
       setSettings(data);
+      // Sync activeProjectId from settings if it exists and is different
+      if (data.activeProjectId && data.activeProjectId !== activeProjectId && projects.length > 0) {
+        // Verify the project exists before setting it
+        const projectExists = projects.some(p => p.id === data.activeProjectId);
+        if (projectExists) {
+          isSyncingFromFirestore.current = true;
+          setActiveProjectId(data.activeProjectId);
+          // Reset flag after a short delay
+          setTimeout(() => {
+            isSyncingFromFirestore.current = false;
+          }, 100);
+        }
+      }
     });
 
     const unsubscribeActiveTimer = db.subscribeToActiveTimer(user.uid, (timer) => {
@@ -134,12 +148,38 @@ const AuthenticatedApp: React.FC = () => {
     };
   }, [user]);
 
-  // Ensure active project exists
+  // Ensure active project exists and sync to Firestore
   useEffect(() => {
-    if (!activeProjectId && projects.length > 0) {
-      setActiveProjectId(projects[0].id);
+    if (!user || projects.length === 0) return;
+    
+    // Don't sync back to Firestore if we're currently syncing from Firestore
+    if (isSyncingFromFirestore.current) return;
+    
+    // If no activeProjectId is set, use the one from settings or default to first project
+    if (!activeProjectId) {
+      const projectIdToUse = settings?.activeProjectId || projects[0].id;
+      // Verify the project exists
+      const projectExists = projects.some(p => p.id === projectIdToUse);
+      const finalProjectId = projectExists ? projectIdToUse : projects[0].id;
+      
+      setActiveProjectId(finalProjectId);
+      // Update settings in Firestore if it's not already set or if we had to use a fallback
+      if (!settings?.activeProjectId || !projectExists) {
+        db.updateSettingsInDb(user.uid, { ...settings, activeProjectId: finalProjectId });
+      }
+    } else {
+      // Verify the activeProjectId still exists in projects
+      const projectExists = projects.some(p => p.id === activeProjectId);
+      if (!projectExists) {
+        const firstProjectId = projects[0].id;
+        setActiveProjectId(firstProjectId);
+        db.updateSettingsInDb(user.uid, { ...settings, activeProjectId: firstProjectId });
+      } else if (settings?.activeProjectId !== activeProjectId) {
+        // Sync if local state differs from Firestore (but avoid if we just set it from Firestore)
+        db.updateSettingsInDb(user.uid, { ...settings, activeProjectId });
+      }
     }
-  }, [projects, activeProjectId]);
+  }, [projects, activeProjectId, user, settings]);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -517,7 +557,13 @@ const AuthenticatedApp: React.FC = () => {
     // Logic to switch active project if we delete the current one
     if (activeProjectId === projectToDelete.id) {
        const other = projects.find(p => p.id !== projectToDelete.id);
-       if (other) setActiveProjectId(other.id);
+       if (other) {
+         setActiveProjectId(other.id);
+         // Sync to Firestore
+         if (user) {
+           db.updateSettingsInDb(user.uid, { ...settings, activeProjectId: other.id });
+         }
+       }
     }
 
     db.deleteProject(user.uid, projectToDelete.id);
@@ -645,6 +691,10 @@ const AuthenticatedApp: React.FC = () => {
                       onClick={() => {
                         setActiveProjectId(p.id);
                         setOpenMenuId(null);
+                        // Sync to Firestore
+                        if (user) {
+                          db.updateSettingsInDb(user.uid, { ...settings, activeProjectId: p.id });
+                        }
                       }}
                       className={`
                         group relative flex items-center justify-between gap-2 px-4 py-3 rounded-xl border transition-all cursor-pointer select-none w-full

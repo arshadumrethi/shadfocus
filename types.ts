@@ -29,6 +29,7 @@ export interface Session {
 export interface Settings {
   timerDuration: number; // minutes
   darkMode: boolean;
+  activeProjectId?: string; // Currently selected project ID
 }
 
 export type AnalyticsPeriod = 'day' | 'last7days' | 'last30days' | 'all';

@@ -5,7 +5,7 @@ import {
   BarChart2, Timer as TimerIcon, Tag, Plus, CheckCircle, X, PlusCircle, Trash2,
   ChevronUp, ChevronDown, Clock, Watch, LogOut, User as UserIcon, MoreVertical, Edit
 } from 'lucide-react';
-import { Settings, Session, Project, ProjectColor } from './types';
+import { Settings, Session, Project, ProjectColor, ActiveTimer } from './types';
 import { PROJECT_COLORS, DEFAULT_PROJECTS } from './constants';
 import { TimerDisplay } from './components/TimerDisplay';
 import { Button } from './components/ui/Button';
@@ -49,17 +49,15 @@ const AuthenticatedApp: React.FC = () => {
   // UI Loading State
   const [isLoadingData, setIsLoadingData] = useState(true);
 
-  // Timer States
-  const [timerMode, setTimerMode] = useState<'pomodoro' | 'stopwatch'>('pomodoro');
-  const [timeLeft, setTimeLeft] = useState(25 * 60); 
-  const [stopwatchSeconds, setStopwatchSeconds] = useState(0); 
+  // Timer States - now synced from Firestore
+  const [activeTimer, setActiveTimer] = useState<ActiveTimer | null>(null);
+  const [displayTime, setDisplayTime] = useState({ timeLeft: 25 * 60, stopwatchSeconds: 0 }); // For smooth UI updates
+  const [selectedMode, setSelectedMode] = useState<'pomodoro' | 'stopwatch'>('pomodoro'); // Mode selection when no timer active
   
-  const [isActive, setIsActive] = useState(false);
   const [view, setView] = useState<'timer' | 'dashboard'>('timer');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
-  // Session tracking state
-  const [startTime, setStartTime] = useState<number | null>(null);
+  // Session tracking state (for UI inputs, synced to activeTimer)
   const [currentNotes, setCurrentNotes] = useState('');
   const [currentTags, setCurrentTags] = useState<string[]>([]);
   const [newTagInput, setNewTagInput] = useState('');
@@ -78,11 +76,19 @@ const AuthenticatedApp: React.FC = () => {
   // Project Deletion State
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
 
-  const timerRef = useRef<number | null>(null);
+  const displayUpdateRef = useRef<number | null>(null); // For UI update interval
   const menuButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
-  const activeProject = projects.find(p => p.id === activeProjectId) || projects[0] || DEFAULT_PROJECTS[0];
+  const activeProject = projects.length > 0 
+    ? (projects.find(p => p.id === activeProjectId) || projects[0] || DEFAULT_PROJECTS[0])
+    : DEFAULT_PROJECTS[0];
   const colorTheme = PROJECT_COLORS[activeProject?.color || 'blue'];
+  
+  // Computed timer values
+  const timerMode = activeTimer?.mode || selectedMode;
+  const isActive = activeTimer?.isActive || false;
+  const timeLeft = displayTime?.timeLeft ?? ((settings?.timerDuration || 25) * 60);
+  const stopwatchSeconds = displayTime?.stopwatchSeconds ?? 0;
 
   // --- Effects for Data Syncing ---
 
@@ -101,9 +107,22 @@ const AuthenticatedApp: React.FC = () => {
 
     const unsubscribeSettings = db.subscribeToSettings(user.uid, (data) => {
       setSettings(data);
-      // Only update time left if timer is NOT running and matches old duration
-      if (!isActive && timerMode === 'pomodoro') {
-        setTimeLeft(data.timerDuration * 60);
+    });
+
+    const unsubscribeActiveTimer = db.subscribeToActiveTimer(user.uid, (timer) => {
+      try {
+        setActiveTimer(timer);
+        // Sync notes and tags from activeTimer to local state for UI
+        if (timer) {
+          setCurrentNotes(timer.notes || '');
+          setCurrentTags(timer.tags || []);
+        } else {
+          // Timer stopped, clear inputs
+          setCurrentNotes('');
+          setCurrentTags([]);
+        }
+      } catch (error) {
+        console.error('Error handling activeTimer update:', error);
       }
     });
 
@@ -111,6 +130,7 @@ const AuthenticatedApp: React.FC = () => {
       unsubscribeProjects();
       unsubscribeSessions();
       unsubscribeSettings();
+      unsubscribeActiveTimer();
     };
   }, [user]);
 
@@ -132,122 +152,194 @@ const AuthenticatedApp: React.FC = () => {
     }
   }, [openMenuId]);
 
-  // Update browser tab title with timer
+  // Sync notes and tags changes to Firestore when activeTimer exists
   useEffect(() => {
-    if (isActive) {
-      if (timerMode === 'pomodoro') {
-        const minutes = Math.floor(timeLeft / 60);
-        const seconds = timeLeft % 60;
-        document.title = `ShadFocus - ${minutes}:${seconds.toString().padStart(2, '0')}`;
-      } else {
-        const minutes = Math.floor(stopwatchSeconds / 60);
-        const seconds = stopwatchSeconds % 60;
-        document.title = `ShadFocus - ${minutes}:${seconds.toString().padStart(2, '0')}`;
-      }
-    } else {
-      document.title = 'ShadFocus';
-    }
-    
-    return () => {
-      // Reset title when component unmounts or timer stops
-      if (!isActive) {
-        document.title = 'ShadFocus';
-      }
-    };
-  }, [isActive, timerMode, timeLeft, stopwatchSeconds]);
-
-  // Timer Logic: Ticking
-  useEffect(() => {
-    if (isActive) {
-      timerRef.current = window.setInterval(() => {
-        if (timerMode === 'pomodoro') {
-          setTimeLeft((prev) => {
-            if (prev <= 0) return 0;
-            return prev - 1;
-          });
-        } else {
-          setStopwatchSeconds((prev) => prev + 1);
+    if (user && activeTimer) {
+      // Debounce updates to avoid too many writes
+      const timeoutId = setTimeout(() => {
+        if (currentNotes !== activeTimer.notes || JSON.stringify(currentTags) !== JSON.stringify(activeTimer.tags)) {
+          db.updateTimerMetadata(user.uid, currentNotes, currentTags);
         }
-      }, 1000);
+      }, 500);
+      return () => clearTimeout(timeoutId);
     }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [isActive, timerMode]);
+  }, [currentNotes, currentTags, activeTimer, user]);
 
-  // Timer Logic: Completion Check
+  // Timer Logic: Calculate time from activeTimer and update display
   useEffect(() => {
-    if (timerMode === 'pomodoro' && timeLeft === 0 && isActive) {
-      handleTimerComplete();
+    if (!activeTimer) {
+      // No active timer, set defaults
+      const defaultDuration = (settings?.timerDuration || 25) * 60;
+      setDisplayTime({ 
+        timeLeft: defaultDuration, 
+        stopwatchSeconds: 0 
+      });
+      document.title = 'ShadFocus';
+      return;
     }
-  }, [timeLeft, isActive, timerMode]); // eslint-disable-line
+
+    const calculateTime = () => {
+      try {
+        const now = Date.now();
+        let elapsedSeconds = 0;
+        
+        // startTime = original start time (never changes)
+        // pausedDuration = total time that was actually paused (time between pause and resume)
+        // When paused: pausedAt marks when the pause happened
+        // elapsed = running time = total time - paused time
+        
+        if (!activeTimer.startTime) {
+          // Invalid timer data, reset
+          return;
+        }
+        
+        const totalElapsed = (now - activeTimer.startTime) / 1000;
+        const pausedDuration = activeTimer.pausedDuration || 0;
+        
+        if (activeTimer.isActive) {
+          // Timer is running: elapsed = total time - paused time
+          elapsedSeconds = totalElapsed - pausedDuration;
+        } else {
+          // Timer is paused: calculate elapsed at the moment of pause
+          // The time since pausedAt is not counted (it's paused time)
+          const pausedAt = activeTimer.pausedAt || now;
+          const elapsedAtPause = (pausedAt - activeTimer.startTime) / 1000;
+          elapsedSeconds = elapsedAtPause - pausedDuration;
+        }
+      
+        if (activeTimer.mode === 'pomodoro') {
+          const initialDuration = activeTimer.initialDuration || (settings?.timerDuration || 25) * 60;
+          const remaining = Math.max(0, initialDuration - elapsedSeconds);
+          setDisplayTime({ timeLeft: Math.floor(remaining), stopwatchSeconds: 0 });
+          
+          // Update document title
+          if (activeTimer.isActive) {
+            const minutes = Math.floor(remaining / 60);
+            const seconds = Math.floor(remaining % 60);
+            document.title = `ShadFocus - ${minutes}:${seconds.toString().padStart(2, '0')}`;
+          } else {
+            document.title = 'ShadFocus';
+          }
+        } else {
+          // Stopwatch mode
+          const elapsed = Math.floor(elapsedSeconds);
+          setDisplayTime({ timeLeft: 0, stopwatchSeconds: elapsed });
+          
+          // Update document title
+          if (activeTimer.isActive) {
+            const minutes = Math.floor(elapsed / 60);
+            const seconds = elapsed % 60;
+            document.title = `ShadFocus - ${minutes}:${seconds.toString().padStart(2, '0')}`;
+          } else {
+            document.title = 'ShadFocus';
+          }
+        }
+      } catch (error) {
+        console.error('Error calculating timer time:', error);
+      }
+    };
+
+    // Calculate immediately
+    calculateTime();
+
+    // Update every second for smooth UI
+    displayUpdateRef.current = window.setInterval(calculateTime, 1000);
+
+    return () => {
+      if (displayUpdateRef.current) {
+        clearInterval(displayUpdateRef.current);
+      }
+    };
+  }, [activeTimer, settings.timerDuration]);
 
   // --- Handlers ---
 
   const resetTimer = useCallback(() => {
-    setIsActive(false);
-    setStartTime(null);
-    if (timerMode === 'pomodoro') {
-      setTimeLeft(settings.timerDuration * 60);
-    } else {
-      setStopwatchSeconds(0);
+    if (user) {
+      db.stopTimer(user.uid);
     }
-  }, [settings.timerDuration, timerMode]);
+  }, [user]);
 
   const saveSession = useCallback((actualDurationSeconds?: number) => {
-    if (!user) return;
+    if (!user || !activeTimer) return;
 
     let duration = 0;
     if (actualDurationSeconds !== undefined) {
       duration = actualDurationSeconds;
     } else {
-       duration = settings.timerDuration * 60;
+      // Calculate from activeTimer
+      const now = Date.now();
+      const elapsedSeconds = (now - activeTimer.startTime) / 1000 - (activeTimer.pausedDuration || 0);
+      if (activeTimer.mode === 'pomodoro') {
+        const initialDuration = activeTimer.initialDuration || settings.timerDuration * 60;
+        duration = Math.max(0, initialDuration - elapsedSeconds);
+        // For pomodoro, we want the time that was actually used
+        duration = (activeTimer.initialDuration || settings.timerDuration * 60) - duration;
+      } else {
+        duration = Math.floor(elapsedSeconds);
+      }
     }
 
-    // Use current active project safely
-    const projectToSave = activeProject || projects[0];
+    // Use project from activeTimer
+    const projectToSave = projects.find(p => p.id === activeTimer.projectId) || activeProject || (projects.length > 0 ? projects[0] : DEFAULT_PROJECTS[0]);
 
     const newSession: Session = {
       id: crypto.randomUUID(),
-      projectId: projectToSave.id,
-      projectName: projectToSave.name,
-      startTime: startTime || Date.now() - (duration * 1000),
+      projectId: activeTimer.projectId,
+      projectName: activeTimer.projectName,
+      startTime: activeTimer.startTime,
       endTime: Date.now(),
       durationSeconds: duration,
-      notes: currentNotes,
-      tags: currentTags,
+      notes: activeTimer.notes || currentNotes,
+      tags: activeTimer.tags || currentTags,
       color: projectToSave.color,
     };
 
     // Save to Firestore
     db.addSession(user.uid, newSession);
 
-    // Reset session input fields
-    setStartTime(null);
-    setCurrentNotes('');
-    setCurrentTags([]);
-    resetTimer();
-  }, [activeProject, projects, settings.timerDuration, startTime, currentNotes, currentTags, resetTimer, user]);
+    // Clear active timer
+    db.stopTimer(user.uid);
+  }, [activeTimer, activeProject, projects, settings.timerDuration, currentNotes, currentTags, user]);
 
-  const handleTimerComplete = useCallback(() => {
-    setIsActive(false);
-    if (timerRef.current) clearInterval(timerRef.current);
-    playNotificationSound();
-    saveSession();
-  }, [saveSession]);
+  // Timer Logic: Completion Check for Pomodoro
+  useEffect(() => {
+    if (activeTimer && activeTimer.mode === 'pomodoro' && activeTimer.isActive && timeLeft === 0) {
+      if (!user || !activeTimer) return;
+      try {
+        playNotificationSound();
+        // Save session with full duration
+        const initialDuration = activeTimer.initialDuration || (settings?.timerDuration || 25) * 60;
+        saveSession(initialDuration);
+      } catch (error) {
+        console.error('Error completing timer:', error);
+      }
+    }
+  }, [activeTimer, timeLeft, user, settings, saveSession]); // eslint-disable-line
 
   const handleFinishEarly = () => {
-    const duration = timerMode === 'pomodoro' 
-      ? (settings.timerDuration * 60) - timeLeft
-      : stopwatchSeconds;
+    if (!user || !activeTimer) return;
+    
+    // Calculate actual duration from activeTimer
+    const now = Date.now();
+    const elapsedSeconds = (now - activeTimer.startTime) / 1000 - (activeTimer.pausedDuration || 0);
+    let duration = 0;
+    
+    if (activeTimer.mode === 'pomodoro') {
+      const initialDuration = activeTimer.initialDuration || settings.timerDuration * 60;
+      const remaining = Math.max(0, initialDuration - elapsedSeconds);
+      duration = initialDuration - remaining;
+    } else {
+      duration = Math.floor(elapsedSeconds);
+    }
 
     if (duration > 1) {
       saveSession(duration);
       playNotificationSound();
+    } else {
+      // If duration is too short, just stop the timer
+      db.stopTimer(user.uid);
     }
-    
-    setIsActive(false);
-    resetTimer();
   };
 
   const handleUpdateSession = (updatedSession: Session) => {
@@ -267,20 +359,43 @@ const AuthenticatedApp: React.FC = () => {
       // Update settings immediately without closing modal or resetting timer
       db.updateSettingsInDb(user.uid, newSettings);
       setSettings(newSettings);
-      // Only update timeLeft if timer is NOT running and it's a pomodoro timer duration change
-      if (!isActive && timerMode === 'pomodoro' && newSettings.timerDuration !== settings.timerDuration) {
-        setTimeLeft(newSettings.timerDuration * 60);
+      // If timer is running and duration changed, update activeTimer
+      if (activeTimer && activeTimer.mode === 'pomodoro' && activeTimer.isActive && newSettings.timerDuration !== settings.timerDuration) {
+        // Update the initialDuration in activeTimer
+        db.startTimer(user.uid, {
+          ...activeTimer,
+          initialDuration: newSettings.timerDuration * 60,
+        });
       }
       // Don't close modal - let user continue adjusting settings
     }
   };
 
   const toggleTimer = () => {
-    if (!isActive) {
-      setIsActive(true);
-      if (!startTime) setStartTime(Date.now());
+    if (!user) return;
+    
+    if (!activeTimer) {
+      // Start new timer
+      const projectToUse = activeProject || projects[0] || DEFAULT_PROJECTS[0];
+      const initialDuration = settings.timerDuration * 60;
+      
+      db.startTimer(user.uid, {
+        mode: selectedMode,
+        isActive: true,
+        startTime: Date.now(),
+        pausedDuration: 0,
+        initialDuration: selectedMode === 'pomodoro' ? initialDuration : undefined,
+        projectId: projectToUse.id,
+        projectName: projectToUse.name,
+        notes: currentNotes,
+        tags: currentTags,
+      });
+    } else if (activeTimer.isActive) {
+      // Pause timer
+      db.pauseTimer(user.uid);
     } else {
-      setIsActive(false);
+      // Resume timer
+      db.resumeTimer(user.uid);
     }
   };
 
@@ -290,19 +405,35 @@ const AuthenticatedApp: React.FC = () => {
        // Optimistic update
        setSettings(prev => ({ ...prev, timerDuration: newDuration }));
        db.updateSettingsInDb(user.uid, { ...settings, timerDuration: newDuration });
-       if (!isActive) setTimeLeft(newDuration * 60);
+       // If timer is active and pomodoro, update activeTimer
+       if (activeTimer && activeTimer.mode === 'pomodoro' && activeTimer.isActive) {
+         db.startTimer(user.uid, {
+           ...activeTimer,
+           initialDuration: newDuration * 60,
+         });
+       }
     }
   };
 
   const addTag = () => {
     if (newTagInput.trim() && !currentTags.includes(newTagInput.trim())) {
-      setCurrentTags([...currentTags, newTagInput.trim()]);
+      const updatedTags = [...currentTags, newTagInput.trim()];
+      setCurrentTags(updatedTags);
       setNewTagInput('');
+      // Sync to Firestore if timer is active
+      if (user && activeTimer) {
+        db.updateTimerMetadata(user.uid, currentNotes, updatedTags);
+      }
     }
   };
 
   const removeTag = (tagToRemove: string) => {
-    setCurrentTags(currentTags.filter(t => t !== tagToRemove));
+    const updatedTags = currentTags.filter(t => t !== tagToRemove);
+    setCurrentTags(updatedTags);
+    // Sync to Firestore if timer is active
+    if (user && activeTimer) {
+      db.updateTimerMetadata(user.uid, currentNotes, updatedTags);
+    }
   };
 
   const createProject = () => {
@@ -363,18 +494,19 @@ const AuthenticatedApp: React.FC = () => {
     setProjectToDelete(null);
   };
 
-  if (isLoadingData) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="animate-pulse flex flex-col items-center">
-          <div className="w-12 h-12 bg-gray-200 rounded-full mb-4"></div>
-          <div className="h-4 w-32 bg-gray-200 rounded"></div>
-        </div>
-      </div>
-    );
-  }
+  // Don't block rendering if data is still loading - show UI with defaults
+  // if (isLoadingData) {
+  //   return (
+  //     <div className="min-h-screen flex items-center justify-center bg-gray-50">
+  //       <div className="animate-pulse flex flex-col items-center">
+  //         <div className="w-12 h-12 bg-gray-200 rounded-full mb-4"></div>
+  //         <div className="h-4 w-32 bg-gray-200 rounded"></div>
+  //       </div>
+  //     </div>
+  //   );
+  // }
 
-  const isDarkMode = settings.darkMode;
+  const isDarkMode = settings?.darkMode ?? false;
 
   return (
     <div className={`min-h-screen transition-colors duration-500 ${isDarkMode ? 'bg-gray-900' : 'bg-gray-50'}`}>
@@ -578,10 +710,11 @@ const AuthenticatedApp: React.FC = () => {
             <div className={`p-1.5 rounded-xl flex gap-1 mb-2 ${isDarkMode ? 'bg-gray-800' : 'bg-gray-200'}`}>
               <button
                 onClick={() => {
-                  setTimerMode('stopwatch');
-                  setIsActive(false);
-                  setStopwatchSeconds(0);
-                  setStartTime(null);
+                  // Stop timer if active and switch mode
+                  if (user && activeTimer) {
+                    db.stopTimer(user.uid);
+                  }
+                  setSelectedMode('stopwatch');
                 }}
                 className={`flex items-center gap-2 px-6 py-2 rounded-lg text-sm font-semibold transition-all ${timerMode === 'stopwatch' 
                   ? (isDarkMode ? 'bg-gray-700 text-gray-100 shadow-sm' : 'bg-white text-gray-900 shadow-sm')
@@ -592,10 +725,11 @@ const AuthenticatedApp: React.FC = () => {
               </button>
               <button
                 onClick={() => {
-                  setTimerMode('pomodoro');
-                  setIsActive(false);
-                  setTimeLeft(settings.timerDuration * 60);
-                  setStartTime(null);
+                  // Stop timer if active and switch mode
+                  if (user && activeTimer) {
+                    db.stopTimer(user.uid);
+                  }
+                  setSelectedMode('pomodoro');
                 }}
                 className={`flex items-center gap-2 px-6 py-2 rounded-lg text-sm font-semibold transition-all ${timerMode === 'pomodoro' 
                   ? (isDarkMode ? 'bg-gray-700 text-gray-100 shadow-sm' : 'bg-white text-gray-900 shadow-sm')
@@ -690,14 +824,14 @@ const AuthenticatedApp: React.FC = () => {
 
               <button 
                 onClick={handleFinishEarly}
-                disabled={(!startTime && timerMode === 'pomodoro') && stopwatchSeconds === 0}
+                disabled={(!activeTimer?.startTime && timerMode === 'pomodoro') && stopwatchSeconds === 0}
                 className={`
                   p-4 rounded-full shadow-md transition-all active:scale-95 border group relative ${
                     isDarkMode 
                       ? 'bg-gray-800 border-gray-700' 
                       : 'bg-white border-gray-100'
                   }
-                  ${((startTime || isActive) || stopwatchSeconds > 0) 
+                  ${((activeTimer?.startTime || isActive) || stopwatchSeconds > 0) 
                     ? (isDarkMode ? 'text-green-400 hover:text-green-300 hover:bg-green-900/30' : 'text-green-600 hover:text-green-700 hover:bg-green-50')
                     : (isDarkMode ? 'text-gray-600 cursor-not-allowed' : 'text-gray-300 cursor-not-allowed')
                   }

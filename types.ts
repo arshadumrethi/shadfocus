@@ -32,3 +32,17 @@ export interface Settings {
 }
 
 export type AnalyticsPeriod = 'day' | 'last7days' | 'last30days' | 'all';
+
+export interface ActiveTimer {
+  id: string; // User ID (one timer per user)
+  mode: 'pomodoro' | 'stopwatch';
+  isActive: boolean;
+  startTime: number; // Server timestamp when timer started
+  pausedAt?: number; // Server timestamp when paused (for resume calculation)
+  pausedDuration: number; // Total paused time in seconds
+  initialDuration?: number; // For pomodoro: total duration in seconds
+  projectId: string;
+  projectName: string;
+  notes: string;
+  tags: string[];
+}

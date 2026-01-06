@@ -66,7 +66,13 @@ export const updateSessionInDb = async (userId: string, session: Session) => {
   if (!db) return;
   await db.collection(`users/${userId}/sessions`).doc(session.id).update({
     notes: session.notes,
-    tags: session.tags
+    tags: session.tags,
+    durationSeconds: session.durationSeconds,
+    startTime: session.startTime,
+    endTime: session.endTime,
+    projectId: session.projectId,
+    projectName: session.projectName,
+    color: session.color
   });
 };
 

@@ -506,6 +506,19 @@ const AuthenticatedApp: React.FC = () => {
     }
   };
 
+  const toggleQuickTag = (tag: string) => {
+    const updatedTags = currentTags.includes(tag)
+      ? currentTags.filter(t => t !== tag)
+      : [...currentTags, tag];
+    setCurrentTags(updatedTags);
+    // Sync to Firestore if timer is active
+    if (user && activeTimer) {
+      db.updateTimerMetadata(user.uid, currentNotes, updatedTags);
+    }
+  };
+
+  const QUICK_TAGS = ['code', 'design', 'planning', 'bugfix'];
+
   const createProject = () => {
     if (!newProjectName.trim() || !user) return;
     
@@ -949,43 +962,63 @@ const AuthenticatedApp: React.FC = () => {
                   />
                 </div>
                 <div className="flex flex-col gap-3">
-                  <div className="flex flex-wrap gap-2 min-h-[28px]">
-                    {currentTags.length === 0 && (
-                      <span className={`text-sm italic py-1 ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>No tags added yet</span>
-                    )}
-                    {currentTags.map(tag => (
-                      <span key={tag} className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${colorTheme.secondary} ${colorTheme.accent} border border-transparent hover:border-current transition-all`}>
-                        #{tag}
-                        <button onClick={() => removeTag(tag)} className="ml-2 hover:text-red-500 rounded-full hover:bg-red-50 p-0.5">
-                          <X size={12} />
-                        </button>
-                      </span>
-                    ))}
+                  {/* Quick Select Tags */}
+                  <div>
+                    <label className={`block text-xs font-medium mb-2 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                      Quick Tags
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {QUICK_TAGS.map(tag => {
+                        const isSelected = currentTags.includes(tag);
+                        return (
+                          <button
+                            key={tag}
+                            type="button"
+                            onClick={() => toggleQuickTag(tag)}
+                            className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium transition-all ${
+                              isSelected
+                                ? `${colorTheme.secondary} ${colorTheme.accent} border-2 ${colorTheme.ring.replace('stroke-', 'border-')}`
+                                : isDarkMode
+                                  ? 'bg-gray-700 text-gray-300 border border-gray-600 hover:bg-gray-600'
+                                  : 'bg-gray-100 text-gray-600 border border-gray-200 hover:bg-gray-200'
+                            }`}
+                          >
+                            #{tag}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                   
-                  <div className="flex items-center gap-2 w-full">
-                    <div className="relative flex-1">
-                      <Tag size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                      <input
-                        type="text"
-                        placeholder="Add a tag..."
-                        value={newTagInput}
-                        onChange={(e) => setNewTagInput(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && addTag()}
-                        className={`w-full pl-9 pr-4 py-2 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all ${
-                          isDarkMode 
-                            ? 'bg-gray-700 border-gray-600 text-gray-100 placeholder-gray-400' 
-                            : 'bg-gray-50 border-gray-200'
-                        }`}
-                      />
+                  {/* Manual Tag Input */}
+                  <div>
+                    <label className={`block text-xs font-medium mb-2 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                      Add Custom Tag
+                    </label>
+                    <div className="flex items-center gap-2 w-full">
+                      <div className="relative flex-1">
+                        <Tag size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                        <input
+                          type="text"
+                          placeholder="Add a tag..."
+                          value={newTagInput}
+                          onChange={(e) => setNewTagInput(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && addTag()}
+                          className={`w-full pl-9 pr-4 py-2 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all ${
+                            isDarkMode 
+                              ? 'bg-gray-700 border-gray-600 text-gray-100 placeholder-gray-400' 
+                              : 'bg-gray-50 border-gray-200'
+                          }`}
+                        />
+                      </div>
+                      <button 
+                        onClick={addTag}
+                        disabled={!newTagInput.trim()}
+                        className="p-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <Plus size={20} />
+                      </button>
                     </div>
-                    <button 
-                      onClick={addTag}
-                      disabled={!newTagInput.trim()}
-                      className="p-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      <Plus size={20} />
-                    </button>
                   </div>
                 </div>
               </div>
@@ -994,7 +1027,8 @@ const AuthenticatedApp: React.FC = () => {
           </div>
         ) : (
           <Dashboard 
-            sessions={sessions} 
+            sessions={sessions}
+            projects={projects}
             updateSession={handleUpdateSession} 
             deleteSession={handleDeleteSession}
             darkMode={isDarkMode} 

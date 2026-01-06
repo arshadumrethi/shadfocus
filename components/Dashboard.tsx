@@ -4,29 +4,33 @@ import {
   PieChart, Pie, Cell, Legend
 } from 'recharts';
 import { Calendar, Tag, Clock, TrendingUp, Sparkles, Filter, Pencil, X, Plus, CalendarDays } from 'lucide-react';
-import { Session, AnalyticsPeriod } from '../types';
+import { Session, AnalyticsPeriod, ProjectColor, Project } from '../types';
 import { Button } from './ui/Button';
 import { Modal } from './ui/Modal';
 import { PROJECT_COLORS } from '../constants';
 
 interface DashboardProps {
   sessions: Session[];
+  projects: Project[];
   updateSession: (updatedSession: Session) => void;
   deleteSession: (sessionId: string) => void;
   darkMode?: boolean;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, deleteSession, darkMode = false }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ sessions, projects, updateSession, deleteSession, darkMode = false }) => {
   const [period, setPeriod] = useState<AnalyticsPeriod>('all');
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [loadingAi, setLoadingAi] = useState(false);
   const [filterTag, setFilterTag] = useState<string>('');
+  const [showToday, setShowToday] = useState(false); // Toggle between today and last work day
   
   // Edit Session State
   const [editingSession, setEditingSession] = useState<Session | null>(null);
   const [editNotes, setEditNotes] = useState('');
   const [editTags, setEditTags] = useState<string[]>([]);
   const [newEditTag, setNewEditTag] = useState('');
+  const [editDurationMinutes, setEditDurationMinutes] = useState<number>(0);
+  const [editProjectId, setEditProjectId] = useState<string>('');
 
   const filteredSessions = useMemo(() => {
     let filtered = [...sessions];
@@ -171,6 +175,56 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
       .sort((a, b) => b.time - a.time);
   }, [lastWorkDaySessions]);
 
+  // Today's sessions and summary
+  const todaySessions = useMemo(() => {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const todayEnd = todayStart + (24 * 60 * 60 * 1000);
+    
+    return sessions.filter(s => {
+      const sessionDate = new Date(s.endTime);
+      const sessionDayStart = new Date(sessionDate.getFullYear(), sessionDate.getMonth(), sessionDate.getDate()).getTime();
+      return sessionDayStart >= todayStart && sessionDayStart < todayEnd;
+    });
+  }, [sessions]);
+
+  const todayTotalTime = useMemo(() => {
+    return todaySessions.reduce((acc, curr) => acc + curr.durationSeconds, 0);
+  }, [todaySessions]);
+
+  const todayByProject = useMemo(() => {
+    const grouped: Record<string, { time: number; sessions: Session[] }> = {};
+    todaySessions.forEach(s => {
+      const projectName = s.projectName || 'Unknown';
+      if (!grouped[projectName]) {
+        grouped[projectName] = { time: 0, sessions: [] };
+      }
+      grouped[projectName].time += s.durationSeconds;
+      grouped[projectName].sessions.push(s);
+    });
+    return Object.entries(grouped)
+      .map(([name, data]) => ({ name, ...data }))
+      .sort((a, b) => b.time - a.time);
+  }, [todaySessions]);
+
+  // Get today's date info
+  const getTodayInfo = useMemo(() => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return {
+      date: today,
+      dayName: today.toLocaleDateString('en-US', { weekday: 'long' }),
+      dateString: today.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    };
+  }, []);
+
+  // Use today or last work day based on toggle
+  const displaySessions = showToday ? todaySessions : lastWorkDaySessions;
+  const displayTotalTime = showToday ? todayTotalTime : lastWorkDayTotalTime;
+  const displayByProject = showToday ? todayByProject : lastWorkDayByProject;
+  const displayDateInfo = showToday ? getTodayInfo : getLastWorkDay;
+  const displayTitle = showToday ? "Today's Activity Summary" : "Last Work Day Summary";
+
   // Stack bar chart data per project per day
   const projectKeys = useMemo(() => {
     const names = new Set<string>();
@@ -196,21 +250,86 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
     }).reverse(); // Oldest first for chart
   }, [filteredSessions]);
 
-  const pieData = useMemo(() => {
-    const grouped: Record<string, number> = {};
+  // Map Tailwind color classes to hex values
+  const getColorHex = (color: ProjectColor | undefined): string => {
+    const colorMap: Record<ProjectColor, string> = {
+      red: '#ef4444',      // red-500
+      green: '#10b981',    // emerald-500
+      purple: '#9333ea',   // purple-600
+      blue: '#3b82f6',     // blue-500
+      yellow: '#eab308'    // yellow-400
+    };
+    return colorMap[color || 'blue'];
+  };
+
+  // Lighten a hex color by a percentage
+  const lightenColor = (hex: string, percent: number): string => {
+    const num = parseInt(hex.replace('#', ''), 16);
+    const r = Math.min(255, (num >> 16) + Math.floor((255 - (num >> 16)) * percent / 100));
+    const g = Math.min(255, ((num >> 8) & 0x00FF) + Math.floor((255 - ((num >> 8) & 0x00FF)) * percent / 100));
+    const b = Math.min(255, (num & 0x0000FF) + Math.floor((255 - (num & 0x0000FF)) * percent / 100));
+    return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+  };
+
+  // Get project color mapping with handling for duplicates
+  const getProjectColorMap = useMemo(() => {
+    const projectColorMap: Record<string, ProjectColor> = {};
+    
+    // First pass: collect unique project names and their colors
     filteredSessions.forEach(s => {
-      const name = s.projectName || 'Unknown Project';
-      grouped[name] = (grouped[name] || 0) + (s.durationSeconds / 60);
+      const projectName = s.projectName || 'Unknown';
+      if (!projectColorMap[projectName] && s.color) {
+        projectColorMap[projectName] = s.color;
+      }
     });
-    // Filter out very small values only if completely zero, otherwise show decimals
-    return Object.entries(grouped).map(([name, value]) => ({ 
-      name, 
-      value: parseFloat(value.toFixed(2)) 
-    })).filter(item => item.value > 0);
+    
+    // Group projects by color
+    const projectsByColor: Record<string, string[]> = {};
+    Object.entries(projectColorMap).forEach(([projectName, color]) => {
+      const colorKey = color;
+      if (!projectsByColor[colorKey]) {
+        projectsByColor[colorKey] = [];
+      }
+      projectsByColor[colorKey].push(projectName);
+    });
+    
+    // Build final color map with lightening for duplicates
+    const finalColorMap: Record<string, string> = {};
+    Object.entries(projectsByColor).forEach(([color, projectNames]) => {
+      projectNames.forEach((projectName, index) => {
+        const baseColor = getColorHex(color as ProjectColor);
+        if (index === 0) {
+          // First project with this color gets the base color
+          finalColorMap[projectName] = baseColor;
+        } else {
+          // Subsequent projects get progressively lighter
+          const lightenPercent = index * 25; // Lighten by 25% for each duplicate
+          finalColorMap[projectName] = lightenColor(baseColor, lightenPercent);
+        }
+      });
+    });
+    
+    return finalColorMap;
   }, [filteredSessions]);
 
-  // Color palette for charts
-  const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#ec4899', '#6366f1'];
+  const pieData = useMemo(() => {
+    const grouped: Record<string, { value: number; color?: ProjectColor }> = {};
+    filteredSessions.forEach(s => {
+      const name = s.projectName || 'Unknown Project';
+      if (!grouped[name]) {
+        grouped[name] = { value: 0, color: s.color };
+      }
+      grouped[name].value += (s.durationSeconds / 60);
+    });
+    // Filter out very small values only if completely zero, otherwise show decimals
+    return Object.entries(grouped)
+      .map(([name, data]) => ({ 
+        name, 
+        value: parseFloat(data.value.toFixed(2)),
+        color: data.color
+      }))
+      .filter(item => item.value > 0);
+  }, [filteredSessions]);
 
   // Session duration distribution data
   const durationDistribution = useMemo(() => {
@@ -275,15 +394,38 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
     setEditingSession(session);
     setEditNotes(session.notes || '');
     setEditTags(session.tags || []);
+    setEditDurationMinutes(Math.ceil(session.durationSeconds / 60));
+    setEditProjectId(session.projectId);
   };
 
   const saveEdit = () => {
     if (!editingSession) return;
-    updateSession({
+    
+    // Find the selected project
+    const selectedProject = projects.find(p => p.id === editProjectId);
+    if (!selectedProject) return;
+    
+    // Calculate new duration and adjust startTime if duration changed
+    const newDurationSeconds = editDurationMinutes * 60;
+    let updatedSession = {
       ...editingSession,
       notes: editNotes,
-      tags: editTags
-    });
+      tags: editTags,
+      projectId: selectedProject.id,
+      projectName: selectedProject.name,
+      color: selectedProject.color
+    };
+    
+    // If duration changed, adjust startTime (keep endTime the same)
+    if (newDurationSeconds !== editingSession.durationSeconds) {
+      updatedSession = {
+        ...updatedSession,
+        durationSeconds: newDurationSeconds,
+        startTime: editingSession.endTime - (newDurationSeconds * 1000)
+      };
+    }
+    
+    updateSession(updatedSession);
     setEditingSession(null);
   };
 
@@ -446,28 +588,53 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-12">
       
-      {/* Last Work Day Summary */}
+      {/* Last Work Day / Today Summary */}
       <div className={`rounded-2xl shadow-lg border overflow-hidden ${
         darkMode ? 'bg-gradient-to-br from-gray-800 to-gray-900 border-gray-700' : 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200'
       }`}>
         <div className={`p-6 border-b ${
           darkMode ? 'border-gray-700' : 'border-blue-200'
         }`}>
-          <div className="flex items-center gap-3 mb-2">
-            <CalendarDays className={darkMode ? 'text-blue-400' : 'text-blue-600'} size={24} />
-            <h2 className={`text-2xl font-bold ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>
-              Last Work Day Summary
-            </h2>
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-3">
+              <CalendarDays className={darkMode ? 'text-blue-400' : 'text-blue-600'} size={24} />
+              <h2 className={`text-2xl font-bold ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>
+                {displayTitle}
+              </h2>
+            </div>
+            {/* Toggle Button */}
+            <div className={`flex rounded-lg p-1 gap-1 ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
+              <button
+                onClick={() => setShowToday(false)}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
+                  !showToday
+                    ? (darkMode ? 'bg-gray-600 shadow text-gray-100' : 'bg-white shadow text-gray-900')
+                    : (darkMode ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-700')
+                }`}
+              >
+                Last Work Day
+              </button>
+              <button
+                onClick={() => setShowToday(true)}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
+                  showToday
+                    ? (darkMode ? 'bg-gray-600 shadow text-gray-100' : 'bg-white shadow text-gray-900')
+                    : (darkMode ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-700')
+                }`}
+              >
+                Today
+              </button>
+            </div>
           </div>
           <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-            {lastWorkDaySessions.length === 0
-              ? `No sessions recorded on ${getLastWorkDay.dayName}, ${getLastWorkDay.dateString}`
-              : `${lastWorkDaySessions.length} session${lastWorkDaySessions.length !== 1 ? 's' : ''} completed on ${getLastWorkDay.dayName}, ${getLastWorkDay.dateString}`
+            {displaySessions.length === 0
+              ? `No sessions recorded on ${displayDateInfo.dayName}, ${displayDateInfo.dateString}`
+              : `${displaySessions.length} session${displaySessions.length !== 1 ? 's' : ''} completed on ${displayDateInfo.dayName}, ${displayDateInfo.dateString}`
             }
           </p>
         </div>
         
-        {lastWorkDaySessions.length > 0 ? (
+        {displaySessions.length > 0 ? (
           <div className="p-6 space-y-4">
             {/* Total Time Card */}
             <div className={`p-4 rounded-xl border ${
@@ -476,7 +643,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
               <div className={`flex items-center justify-between ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
                 <span className="font-medium">Total Time</span>
                 <span className={`text-3xl font-bold ${darkMode ? 'text-blue-400' : 'text-blue-600'}`}>
-                  {formatDuration(lastWorkDayTotalTime)}
+                  {formatDuration(displayTotalTime)}
                 </span>
               </div>
             </div>
@@ -489,8 +656,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
                 Time by Project
               </h3>
               <div className="space-y-2">
-                {lastWorkDayByProject.map(({ name, time, sessions: projectSessions }) => {
-                  const percentage = (time / lastWorkDayTotalTime) * 100;
+                {displayByProject.map(({ name, time, sessions: projectSessions }) => {
+                  const percentage = (time / displayTotalTime) * 100;
                   const session = projectSessions[0];
                   const colorTheme = PROJECT_COLORS[session?.color] || PROJECT_COLORS.blue;
                   return (
@@ -544,7 +711,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
         ) : (
           <div className={`p-6 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
             <Clock size={48} className={`mx-auto mb-3 ${darkMode ? 'text-gray-600' : 'text-gray-300'}`} />
-            <p>No time tracked on {getLastWorkDay.dayName}, {getLastWorkDay.dateString}. Start a session to see your progress!</p>
+            <p>No time tracked on {displayDateInfo.dayName}, {displayDateInfo.dateString}. Start a session to see your progress!</p>
           </div>
         )}
       </div>
@@ -709,7 +876,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
                 />
                 <Bar 
                   dataKey="count" 
-                  fill={CHART_COLORS[0]} 
+                  fill="#3b82f6" 
                   radius={[4, 4, 0, 0]}
                 />
               </BarChart>
@@ -825,9 +992,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
                   formatter={(value: number, name: string) => [formatMinutes(value), name]}
                 />
                 <Legend />
-                {projectKeys.map((key, idx) => {
-                  const palette = ['#60a5fa', '#34d399', '#f59e0b', '#a78bfa', '#f87171', '#fb7185', '#22d3ee', '#c084fc', '#fbbf24'];
-                  const fill = palette[idx % palette.length];
+                {projectKeys.map((key) => {
+                  const fill = getProjectColorMap[key] || '#3b82f6'; // Default to blue if not found
                   return (
                     <Bar key={key} dataKey={key} stackId="time" fill={fill} radius={[4, 4, 0, 0]} />
                   );
@@ -855,9 +1021,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
                   paddingAngle={5}
                   dataKey="value"
                 >
-                  {pieData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                  ))}
+                  {pieData.map((entry, index) => {
+                    const fill = getProjectColorMap[entry.name] || '#3b82f6'; // Default to blue if not found
+                    return (
+                      <Cell key={`cell-${index}`} fill={fill} />
+                    );
+                  })}
                 </Pie>
                 <Tooltip formatter={(value: number, name: string, props: any) => {
                   const projectName = props.payload?.name || name;
@@ -998,21 +1167,107 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
         title="Edit Session"
       >
         <div className="space-y-4">
+          {/* Project Selector */}
+          <div>
+            <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Project</label>
+            <select
+              value={editProjectId}
+              onChange={(e) => setEditProjectId(e.target.value)}
+              className={`w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none ${
+                darkMode 
+                  ? 'bg-gray-700 border-gray-600 text-gray-100' 
+                  : 'bg-white border-gray-300 text-gray-700'
+              }`}
+            >
+              {projects.map(project => {
+                const colorTheme = PROJECT_COLORS[project.color];
+                return (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+          
+          {/* Duration */}
            <div>
-             <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+             <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Duration (minutes)</label>
+             <div className="flex items-center gap-2">
+               <button
+                 onClick={() => setEditDurationMinutes(Math.max(1, editDurationMinutes - 1))}
+                 className={`px-3 py-2 rounded-lg border transition-all ${
+                   darkMode 
+                     ? 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600' 
+                     : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+                 }`}
+               >
+                 -
+               </button>
+               <input
+                 type="number"
+                 min="1"
+                 value={editDurationMinutes}
+                 onChange={(e) => {
+                   const value = parseInt(e.target.value) || 1;
+                   setEditDurationMinutes(Math.max(1, value));
+                 }}
+                 className={`flex-1 border rounded-lg px-3 py-2 text-center focus:ring-2 focus:ring-blue-500 focus:outline-none ${
+                   darkMode 
+                     ? 'bg-gray-700 border-gray-600 text-gray-100' 
+                     : 'border-gray-300'
+                 }`}
+               />
+               <button
+                 onClick={() => setEditDurationMinutes(editDurationMinutes + 1)}
+                 className={`px-3 py-2 rounded-lg border transition-all ${
+                   darkMode 
+                     ? 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600' 
+                     : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+                 }`}
+               >
+                 +
+               </button>
+             </div>
+             {editingSession && (
+               <p className={`text-xs mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                 Current: {(() => {
+                   const totalMinutes = Math.ceil(editingSession.durationSeconds / 60);
+                   if (totalMinutes < 60) {
+                     return `${totalMinutes} mins`;
+                   } else {
+                     const hours = Math.floor(totalMinutes / 60);
+                     const mins = totalMinutes % 60;
+                     return `${hours}h ${mins}m`;
+                   }
+                 })()}
+               </p>
+             )}
+           </div>
+
+           <div>
+             <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Notes</label>
              <textarea 
                value={editNotes}
                onChange={(e) => setEditNotes(e.target.value)}
-               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none min-h-[100px]"
+               className={`w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none min-h-[100px] ${
+                 darkMode 
+                   ? 'bg-gray-700 border-gray-600 text-gray-100 placeholder-gray-400' 
+                   : 'border-gray-300'
+               }`}
                placeholder="Add notes..."
              />
            </div>
 
            <div>
-             <label className="block text-sm font-medium text-gray-700 mb-2">Tags</label>
+             <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Tags</label>
              <div className="flex flex-wrap gap-2 mb-2">
                {editTags.map(tag => (
-                 <span key={tag} className="inline-flex items-center px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-sm font-medium">
+                 <span key={tag} className={`inline-flex items-center px-2 py-1 rounded-md text-sm font-medium ${
+                   darkMode 
+                     ? 'bg-blue-900/30 text-blue-300' 
+                     : 'bg-blue-50 text-blue-700'
+                 }`}>
                    #{tag}
                    <button onClick={() => removeEditTag(tag)} className="ml-1 hover:text-red-500">
                      <X size={12} />
@@ -1027,7 +1282,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ sessions, updateSession, d
                  onChange={(e) => setNewEditTag(e.target.value)}
                  onKeyDown={(e) => e.key === 'Enter' && addEditTag()}
                  placeholder="New tag..."
-                 className="flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm"
+                 className={`flex-1 border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm ${
+                   darkMode 
+                     ? 'bg-gray-700 border-gray-600 text-gray-100 placeholder-gray-400' 
+                     : 'border-gray-300'
+                 }`}
                />
                <Button size="sm" onClick={addEditTag} disabled={!newEditTag.trim()}>
                  <Plus size={16} />
